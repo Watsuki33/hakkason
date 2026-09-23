@@ -1,35 +1,74 @@
 import './styles.css';
 
-type Message = { sender: 'me' | 'other'; text: string; time: string; read?: boolean };
-type Conversation = { id: string; name: string; initial: string; avatar: string; preview: string; time: string; online?: boolean; messages: Message[] };
+type Reaction = { name: string; emoji: string; text: string; tone: string };
+type Post = { id: string; name: string; time: string; image: string; text: string; reactions: string };
 
-const conversations: Conversation[] = [
-	{ id: 'yuki', name: 'ゆうき', initial: 'ゆ', avatar: '', preview: '明日の集合、10時で大丈夫！', time: '10:42', online: true, messages: [{ sender: 'other', text: 'おつかれさま！明日の集合、10時で大丈夫？', time: '10:40' }, { sender: 'me', text: 'うん、大丈夫！駅前に集合しよう', time: '10:41', read: true }, { sender: 'other', text: '了解！楽しみにしてるね', time: '10:42' }] },
-	{ id: 'team', name: 'プロジェクトチーム', initial: 'P', avatar: 'blue', preview: 'さくら: 資料を更新しました', time: '昨日', messages: [{ sender: 'other', text: '資料を更新しました。確認お願いします！', time: '昨日' }, { sender: 'me', text: 'ありがとうございます、確認します', time: '昨日', read: true }] },
-	{ id: 'sakura', name: 'さくら', initial: 'さ', avatar: 'purple', preview: '写真ありがとう！', time: '月', messages: [{ sender: 'other', text: '写真ありがとう！また行こうね', time: '月' }] },
-	{ id: 'ken', name: 'けん', initial: 'け', avatar: 'orange', preview: 'また連絡するね', time: '日', messages: [{ sender: 'me', text: '今日はありがとう！', time: '日', read: true }] },
-	{ id: 'family', name: '家族', initial: '家', avatar: 'teal', preview: '母: 夕飯どうする？', time: '土', messages: [{ sender: 'other', text: '夕飯どうする？', time: '土' }] },
+const reactions: Reaction[] = [
+	{ name: 'さくら', emoji: '🥰', text: 'おいしそう！', tone: 'peach' },
+	{ name: 'ゆうき', emoji: '😋', text: 'いいね！', tone: 'yellow' },
+	{ name: 'けん', emoji: '👏', text: '食べたい！', tone: 'blue' },
+	{ name: 'みさき', emoji: '❤️', text: 'いいね！', tone: 'pink' },
 ];
 
-let selectedId = 'yuki';
+const posts: Post[] = [
+	{ id: 'sakura-post', name: 'さくら', time: '10分前', image: '🥗', text: '今日のお昼は野菜たっぷり！', reactions: 'さくら、ゆうき 他3人' },
+	{ id: 'yuki-post', name: 'ゆうき', time: '1時間前', image: '🍝', text: 'お気に入りのお店でランチしてきたよ', reactions: 'けん 他2人' },
+	{ id: 'ken-post', name: 'けん', time: '昨日', image: '🍱', text: 'みんなで食べるごはんは最高！', reactions: 'みさき 他4人' },
+];
+
 const root = document.querySelector<HTMLDivElement>('#app')!;
 
-function avatar(conversation: Conversation, small = false): string { return `<span class="avatar ${conversation.avatar} ${conversation.online ? 'online' : ''} ${small ? 'message-avatar' : ''}">${conversation.initial}</span>`; }
-
 function render(): void {
-	const selected = conversations.find((item) => item.id === selectedId) ?? conversations[0];
-	root.innerHTML = `<main class="shell chat-open"><aside class="sidebar"><header class="brand"><span class="brand-name">胃縁</span><button class="icon-button" aria-label="新しいメッセージ">＋</button></header><label class="search"><span class="search-icon">⌕</span><input id="search" type="search" placeholder="メッセージを検索" aria-label="メッセージを検索"></label><div class="section-label">Messages</div><div class="conversation-list" id="conversation-list">${renderConversations(conversations)}</div><footer class="sidebar-footer"><span class="profile-avatar"></span><span class="profile-copy"><strong class="profile-name">たかし</strong><small class="profile-status">オンライン</small></span><button class="icon-button" aria-label="設定">•••</button></footer></aside><section class="chat"><header class="chat-header"><div class="chat-person"><button class="icon-button back-button" aria-label="会話一覧に戻る">‹</button>${avatar(selected)}<div><h1 class="chat-title">${selected.name}</h1><p class="chat-subtitle">${selected.online ? 'オンライン' : '最近のメッセージ'}</p></div></div><div class="chat-actions"><button class="icon-button" aria-label="通話">⌕</button><button class="icon-button" aria-label="その他">•••</button></div></header><div class="messages" id="messages"><div class="day-divider">今日</div>${renderMessages(selected.messages)}</div><div class="composer-wrap"><form class="composer" id="composer"><button type="button" class="attach" aria-label="ファイルを添付">＋</button><input id="message-input" autocomplete="off" placeholder="メッセージを入力..." aria-label="メッセージを入力"><button class="send" type="submit" aria-label="送信">↑</button></form></div></section></main>`;
+	root.innerHTML = `
+		<main class="home-shell">
+			<header class="home-header"><h1>ホーム</h1><button class="profile-button" aria-label="プロフィール">◉</button></header>
+			<div class="home-scroll">
+				<section class="reaction-section" aria-label="友達からのリアクション">
+					<p class="section-kicker">あなたの投稿にリアクション</p>
+					<div class="stomach-scene">
+						<svg class="stomach-art" viewBox="0 0 280 320" aria-hidden="true">
+							<path d="M174 22c-9 55 5 77 40 95 38 20 40 62 13 91-26 28-62 31-92 48-33 19-49 42-57 72l-43-6c7-48 22-83 56-111 19-16 43-27 52-52 9-26-12-47-17-72-5-25 0-46 11-70z" />
+							<path class="stomach-line" d="M174 23c15 15 43 16 57 1" />
+						</svg>
+						<div class="reaction-bubbles">
+							${reactions.map((reaction, index) => `<button class="reaction-bubble ${reaction.tone} bubble-${index}" data-reaction="${reaction.name}"><span>${reaction.emoji}</span><small>${reaction.name}</small><strong>${reaction.text}</strong></button>`).join('')}
+						</div>
+					</div>
+					<p class="reaction-hint">みんなの気持ちが胃の中にたまっているよ</p>
+				</section>
+				<section class="timeline-section" id="timeline">
+					<div class="section-heading"><h2>タイムライン</h2><button class="timeline-link" id="show-all">すべて見る</button></div>
+					<div class="post-list">${posts.map(renderPost).join('')}</div>
+				</section>
+			</div>
+			<button class="camera-button" id="camera-button" aria-label="写真を投稿"><span>▣</span></button>
+			<nav class="bottom-nav" aria-label="メインメニュー">
+				<button class="nav-item active"><span>⌂</span><small>ホーム</small></button>
+				<button class="nav-item"><span>♟</span><small>グループ</small></button>
+				<button class="nav-item"><span>✿</span><small>アドバイス</small></button>
+				<button class="nav-item"><span>□</span><small>カレンダー</small></button>
+			</nav>
+		</main>`;
 	bindEvents();
 }
 
-function renderConversations(items: Conversation[]): string { return items.length ? items.map((conversation) => `<button class="conversation ${conversation.id === selectedId ? 'active' : ''}" data-id="${conversation.id}">${avatar(conversation)}<span class="conversation-copy"><strong class="conversation-name">${conversation.name}</strong><small class="conversation-preview">${conversation.preview}</small></span><small class="conversation-time">${conversation.time}</small></button>`).join('') : '<p style="padding:16px;color:#81908b;font-size:13px">見つかりませんでした</p>'; }
-function renderMessages(messages: Message[]): string { return messages.map((message) => `<div class="message-row ${message.sender === 'me' ? 'mine' : ''}">${message.sender === 'other' ? avatar(conversations.find((item) => item.id === selectedId)!, true) : ''}<div class="message-content"><div class="bubble">${escapeHtml(message.text)}</div><small class="message-time ${message.read ? 'read' : ''}">${message.time}${message.read ? ' ✓' : ''}</small></div></div>`).join(''); }
+function renderPost(post: Post): string {
+	return `<button class="post-card" data-post-id="${post.id}">
+		<div class="post-top"><span class="post-avatar">${post.name.charAt(0)}</span><span><strong>${post.name}</strong><small>${post.time}</small></span><span class="post-more">•••</span></div>
+		<div class="post-image">${post.image}</div><p class="post-text">${post.text}</p><div class="post-reactions">♡ ${post.reactions}</div>
+	</button>`;
+}
 
 function bindEvents(): void {
-	document.querySelectorAll<HTMLButtonElement>('[data-id]').forEach((button) => button.addEventListener('click', () => { selectedId = button.dataset.id ?? selectedId; render(); }));
-	document.querySelector<HTMLButtonElement>('.back-button')?.addEventListener('click', () => document.querySelector('.shell')?.classList.remove('chat-open'));
-	document.querySelector<HTMLInputElement>('#search')?.addEventListener('input', (event) => { const query = (event.target as HTMLInputElement).value.toLowerCase(); document.querySelector('#conversation-list')!.innerHTML = renderConversations(conversations.filter((item) => item.name.toLowerCase().includes(query) || item.preview.toLowerCase().includes(query))); });
-	document.querySelector<HTMLFormElement>('#composer')?.addEventListener('submit', (event) => { event.preventDefault(); const input = document.querySelector<HTMLInputElement>('#message-input')!; const text = input.value.trim(); if (!text) return; const conversation = conversations.find((item) => item.id === selectedId)!; conversation.messages.push({ sender: 'me', text, time: new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }), read: true }); conversation.preview = text; conversation.time = '今'; render(); document.querySelector('#messages')?.scrollTo({ top: 99999, behavior: 'smooth' }); });
+	document.querySelectorAll<HTMLButtonElement>('.post-card').forEach((card) => card.addEventListener('click', () => card.scrollIntoView({ behavior: 'smooth', block: 'center' })));
+	document.querySelector<HTMLButtonElement>('#show-all')?.addEventListener('click', () => document.querySelector('#timeline')?.scrollIntoView({ behavior: 'smooth' }));
+	document.querySelector<HTMLButtonElement>('#camera-button')?.addEventListener('click', showCamera);
+	document.querySelectorAll<HTMLButtonElement>('.reaction-bubble').forEach((bubble) => bubble.addEventListener('click', () => bubble.classList.toggle('selected')));
 }
-function escapeHtml(value: string): string { return value.replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character] ?? character)); }
+
+function showCamera(): void {
+	root.innerHTML = `<main class="camera-screen"><button class="camera-back" id="camera-back">‹ ホーム</button><div class="camera-copy"><span class="camera-icon">▣</span><h1>写真を投稿</h1><p>今日のごはんをみんなにシェアしよう</p><label class="photo-picker">写真を選ぶ<input type="file" accept="image/*" capture="environment"></label></div></main>`;
+	document.querySelector('#camera-back')?.addEventListener('click', render);
+}
+
 render();
