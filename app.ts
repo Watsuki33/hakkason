@@ -637,6 +637,7 @@ function showProfile(returnAction: (() => void) | null = render): void {
 			<h2>${!profilePublic ? '<span class="private-lock" aria-label="非公開">🔒</span>' : ''}${escapeHtml(profileName)}</h2><p class="profile-handle">@my_gohan</p>${profileMessage ? `<p class="profile-message">${escapeHtml(profileMessage)}</p>` : ''}<p class="profile-visibility">${profilePublic ? '公開プロフィール' : '非公開プロフィール'}</p>
 			<div class="profile-stats"><button class="profile-stat-button" id="my-posts"><strong>12</strong><small>投稿</small></button><button class="profile-stat-button" id="my-connections"><strong>${connections.length}</strong><small>つながり</small></button><button class="profile-stat-button" id="my-favorites"><strong>${favorites.length}</strong><small>お気に入り</small></button><button class="profile-stat-button" id="my-friend-requests"><strong>${pendingIncoming.length}</strong><small>フレンド申請</small></button></div>
 			<button class="profile-action" id="edit-profile">プロフィールを編集</button>
+			<button class="profile-logout" id="logout-button" type="button">ログアウト</button>
 			<section class="friend-add-section" aria-labelledby="friend-add-title">
 				<h2 id="friend-add-title">フレンド申請</h2>
 				<div class="my-username-row"><span>あなたのユーザー名</span><strong>${ownUsername}</strong><button type="button" id="copy-username">コピー</button></div>
@@ -680,6 +681,7 @@ function showProfile(returnAction: (() => void) | null = render): void {
 	document.querySelector<HTMLButtonElement>('#my-favorites')?.addEventListener('click', showFavorites);
 	document.querySelector<HTMLButtonElement>('#my-friend-requests')?.addEventListener('click', showFriendRequests);
 	document.querySelector<HTMLButtonElement>('#edit-profile')?.addEventListener('click', showProfileEdit);
+	document.querySelector<HTMLButtonElement>('#logout-button')?.addEventListener('click', showLogin);
 	document.querySelectorAll<HTMLButtonElement>('[data-font-size]').forEach((button) => button.addEventListener('click', () => {
 			const nextFontSize = button.dataset.fontSize;
 			if (nextFontSize !== 'normal' && nextFontSize !== 'large' && nextFontSize !== 'x-large') return;
@@ -924,6 +926,66 @@ function showCamera(): void {
 	});
 }
 
+function showLogin(): void {
+	root.innerHTML = `<main class="auth-screen">
+		<section class="auth-card" aria-labelledby="auth-title">
+			<div class="auth-mark" aria-hidden="true">胃</div>
+			<p class="auth-kicker">ごはんでつながる</p>
+			<h1 id="auth-title">胃縁へようこそ</h1>
+			<p class="auth-description">食事の記録を、みんなとやさしく共有しよう。</p>
+			<div class="auth-tabs" role="tablist" aria-label="アカウント操作">
+				<button class="auth-tab active" id="login-tab" role="tab" aria-selected="true">ログイン</button>
+				<button class="auth-tab" id="register-tab" role="tab" aria-selected="false">新規登録</button>
+			</div>
+			<form class="auth-form" id="auth-form">
+				<label for="auth-username">ユーザー名</label>
+				<input id="auth-username" name="username" type="text" autocomplete="username" placeholder="ユーザー名を入力" required>
+				<label for="auth-password">パスワード</label>
+				<div class="auth-password-field"><input id="auth-password" name="password" type="password" autocomplete="current-password" placeholder="パスワードを入力" required><button class="password-toggle" id="password-toggle" type="button" aria-label="パスワードを表示"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg></button></div>
+				<p class="auth-error" id="auth-error" aria-live="polite"></p>
+				<button class="auth-submit" type="submit" id="auth-submit">ログインする</button>
+			</form>
+			<p class="auth-note">サーバー接続後はここからアカウント認証を行います。</p>
+		</section>
+	</main>`;
+	let registerMode = false;
+	const title = document.querySelector<HTMLElement>('#auth-title')!;
+	const form = document.querySelector<HTMLFormElement>('#auth-form')!;
+	const submit = document.querySelector<HTMLButtonElement>('#auth-submit')!;
+	const error = document.querySelector<HTMLElement>('#auth-error')!;
+	const username = document.querySelector<HTMLInputElement>('#auth-username')!;
+	const password = document.querySelector<HTMLInputElement>('#auth-password')!;
+	const updateMode = (): void => {
+		registerMode = !registerMode;
+		title.textContent = registerMode ? 'アカウントを作成' : '胃縁へようこそ';
+		submit.textContent = registerMode ? 'アカウントを作成する' : 'ログインする';
+		password.autocomplete = registerMode ? 'new-password' : 'current-password';
+		document.querySelector('#login-tab')?.classList.toggle('active', !registerMode);
+		document.querySelector('#register-tab')?.classList.toggle('active', registerMode);
+		document.querySelector('#login-tab')?.setAttribute('aria-selected', String(!registerMode));
+		document.querySelector('#register-tab')?.setAttribute('aria-selected', String(registerMode));
+		error.textContent = '';
+	};
+	document.querySelector<HTMLButtonElement>('#login-tab')?.addEventListener('click', () => { if (registerMode) updateMode(); });
+	document.querySelector<HTMLButtonElement>('#register-tab')?.addEventListener('click', () => { if (!registerMode) updateMode(); });
+	document.querySelector<HTMLButtonElement>('#password-toggle')?.addEventListener('click', (event) => {
+		const toggle = event.currentTarget as HTMLButtonElement;
+		const isVisible = password.type === 'text';
+		password.type = isVisible ? 'password' : 'text';
+		toggle.setAttribute('aria-label', isVisible ? 'パスワードを表示' : 'パスワードを隠す');
+	});
+	form.addEventListener('submit', (event) => {
+		event.preventDefault();
+		if (!username.value.trim() || !password.value) {
+			error.textContent = 'ユーザー名とパスワードを入力してください';
+			return;
+		}
+		profileName = username.value.trim();
+		saveAppState();
+		render();
+	});
+}
+
 loadAppState();
 applyFontSize();
-render();
+showLogin();
