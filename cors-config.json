@@ -1,12 +1,13 @@
 [
   {
     "origin": [
+      "http://localhost:3000",
       "http://localhost:5173",
       "https://hackason-25c13.web.app",
       "https://hackason-25c13.firebaseapp.com"
     ],
-    "method": ["GET", "POST", "PUT", "OPTIONS"],
-    "responseHeader": ["Content-Type"],
+    "method": ["GET", "POST", "PUT", "DELETE", "HEAD"],
+    "responseHeader": ["Content-Type", "Authorization", "x-goog-meta-*"],
     "maxAgeSeconds": 3600
   }
 ]

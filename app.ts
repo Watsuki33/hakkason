@@ -1222,7 +1222,7 @@ function showCamera(): void {
 		} catch {
 			addPostToLocalFeeds(post);
 			render();
-			showInfoDialog('この端末に投稿しました', 'クラウドへの画像保存に失敗したため、この端末のタイムラインと参加中のグループに反映しました。Firebase StorageのCORS設定を確認してください。');
+			showInfoDialog('この端末に投稿しました', 'クラウドへの画像保存に失敗したため、この端末のタイムラインと参加中のグループに反映しました。');
 		}
 	});
 	document.querySelector('#camera-back')?.addEventListener('click', render);
