@@ -1,13 +1,14 @@
 import './styles.css';
 import { createCloudPost, deleteCloudPost, firebaseEnabled, sendCloudMessage, subscribeToMessages, subscribeToPosts } from './firebase';
 import { requestAdvice } from './client-api';
-import { readStoredJson, writeStoredJson } from './storage';
+import { readStoredJson, readTabJson, writeStoredJson, writeTabJson } from './storage';
 
 type Reaction = { name: string; stamp: string; text: string; tone: string };
 type FontSize = 'normal' | 'large' | 'x-large';
 type Post = { id: string; name: string; time: string; image: string; text: string; reactions: string; postedAt?: string };
 type Connection = { id: string; name: string; photo: string; message: string };
 type FriendRequest = { id: string; from: string; to: string; friendId: string; status: 'pending' | 'accepted' };
+type SharedProfile = { username: string; name: string; photo: string; message: string };
 type GroupInvite = { id: string; groupId: string; groupName: string; inviteeId: string; from: string; status: 'pending' | 'accepted' | 'declined' };
 type SavedState = { profileName: string; username?: string; profileImage: string; notificationsEnabled: boolean; profileMessage: string; profilePublic: boolean; fontSize?: FontSize; connections: Connection[]; friendRequests?: FriendRequest[]; groupInvites?: GroupInvite[]; favorites: Post[]; personalPosts: Post[] };
 type Group = { id: string; name: string; image: string; members: string[]; posts: Post[]; visibility?: GroupVisibility };
@@ -35,12 +36,7 @@ const myPosts: Post[] = [
 
 let personalPosts: Post[] = [...myPosts];
 
-let connections: Connection[] = [
-	{ id: 'sakura', name: 'さくら', photo: '🌸', message: 'おいしいものが好き' },
-	{ id: 'yuki', name: 'ゆうき', photo: '☕', message: 'カフェ巡り中' },
-	{ id: 'ken', name: 'けん', photo: '🍙', message: 'みんなでごはん' },
-	{ id: 'misaki', name: 'みさき', photo: '🍓', message: '料理に挑戦中' },
-];
+let connections: Connection[] = [];
 
 let favorites: Post[] = [
 	{ id: 'favorite-1', name: 'さくら', time: '10分前', image: '🥗', text: '今日のお昼は野菜たっぷり！', reactions: 'さくら、ゆうき 他3人' },
@@ -76,6 +72,79 @@ let groupInvites: GroupInvite[] = [];
 let profileReturnAction: (() => void) | null = render;
 let stopPostsListener: (() => void) | null = null;
 let stopMessagesListener: (() => void) | null = null;
+let isAuthenticated = false;
+const sharedProfilesKey = 'hakason-shared-profiles';
+const sharedFriendRequestsKey = 'hakason-shared-friend-requests';
+
+function getSharedProfiles(): SharedProfile[] {
+	return readStoredJson<SharedProfile[]>(sharedProfilesKey) ?? [];
+}
+
+function publishOwnProfile(): void {
+	const profiles = getSharedProfiles().filter((profile) => profile.username !== ownUsername);
+	writeStoredJson(sharedProfilesKey, [...profiles, { username: ownUsername, name: profileName, photo: profileImage, message: profileMessage }]);
+}
+
+function getAvailableFriends(): Connection[] {
+	const sharedFriends = getSharedProfiles().map((profile) => ({ id: profile.username.replace(/^@/, ''), name: profile.name, photo: profile.photo || '🍽️', message: profile.message }));
+	return [...friendDirectory, ...sharedFriends].filter((friend, index, list) => list.findIndex((candidate) => candidate.id.toLowerCase() === friend.id.toLowerCase()) === index);
+}
+
+function getFriendById(id: string): Connection {
+	return getAvailableFriends().find((friend) => friend.id.toLowerCase() === id.toLowerCase()) ?? { id, name: `@${id}`, photo: '🍽️', message: '' };
+}
+
+function getSharedFriendRequests(): FriendRequest[] {
+	return readStoredJson<FriendRequest[]>(sharedFriendRequestsKey) ?? [];
+}
+
+function saveSharedFriendRequests(requests: FriendRequest[]): void {
+	friendRequests = requests;
+	writeStoredJson(sharedFriendRequestsKey, requests);
+}
+
+async function syncFriendRequestsFromServer(): Promise<void> {
+	try {
+		const response = await fetch('/api/friend-requests');
+		if (!response.ok) return;
+		const requests = await response.json() as FriendRequest[];
+		if (JSON.stringify(requests) === JSON.stringify(friendRequests)) return;
+		friendRequests = requests;
+		writeStoredJson(sharedFriendRequestsKey, requests);
+		syncAcceptedFriendships();
+		if (document.querySelector('#friend-add-form')) showProfile(profileReturnAction);
+		if (document.querySelector('#friend-requests-back')) showFriendRequests();
+	} catch {
+		// localStorage remains available when the development server is offline
+	}
+}
+
+function publishFriendRequest(request: FriendRequest): void {
+	void fetch('/api/friend-requests', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request) }).catch(() => undefined);
+}
+
+function acceptFriendRequestOnServer(requestId: string): void {
+	void fetch(`/api/friend-requests/${encodeURIComponent(requestId)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'accepted' }) }).catch(() => undefined);
+}
+
+function syncAcceptedFriendships(): void {
+	const acceptedRequests = friendRequests.filter((request) => request.status === 'accepted' && (request.from === ownUsername || request.to === ownUsername));
+	const acceptedFriends = acceptedRequests.map((request) => {
+		const friendId = request.from === ownUsername ? request.friendId : request.from.replace(/^@/, '');
+		return getFriendById(friendId);
+	});
+	const newConnections = acceptedFriends.filter((friend) => !connections.some((connection) => connection.id.toLowerCase() === friend.id.toLowerCase()));
+	if (!newConnections.length) return;
+	connections = [...connections, ...newConnections];
+	saveAppState();
+}
+
+function syncSharedFriends(): void {
+	friendRequests = getSharedFriendRequests();
+	syncAcceptedFriendships();
+	if (document.querySelector('#friend-add-form')) showProfile(profileReturnAction);
+	if (document.querySelector('#friend-requests-back')) showFriendRequests();
+}
 
 async function connectCloudTimeline(): Promise<void> {
 	if (!firebaseEnabled || stopPostsListener) return;
@@ -91,15 +160,15 @@ async function connectCloudTimeline(): Promise<void> {
 
 function saveAppState(): void {
 	const state: SavedState = { profileName, username: ownUsername.slice(1), profileImage, notificationsEnabled, profileMessage, profilePublic, fontSize, connections, friendRequests, groupInvites, favorites, personalPosts };
-	writeStoredJson('hakason-app-state', state);
+	writeTabJson('hakason-app-state', state);
 }
 
 function loadAppState(): void {
-	const state = readStoredJson<Partial<SavedState>>('hakason-app-state');
+	const state = readTabJson<Partial<SavedState>>('hakason-app-state');
 	if (!state) return;
 	try {
 		if (typeof state.profileName === 'string') profileName = state.profileName;
-		if (typeof state.username === 'string' && /^[A-Za-z0-9]+$/.test(state.username)) ownUsername = `@${state.username}`;
+		if (typeof state.username === 'string' && /^[A-Za-z0-9_]+$/.test(state.username)) ownUsername = `@${state.username}`;
 		if (typeof state.profileImage === 'string') profileImage = state.profileImage;
 		if (typeof state.notificationsEnabled === 'boolean') notificationsEnabled = state.notificationsEnabled;
 		if (typeof state.profileMessage === 'string') profileMessage = state.profileMessage;
@@ -250,6 +319,10 @@ function formatWeekRange(weekStart: Date): string {
 }
 
 function render(): void {
+	if (!isAuthenticated) {
+		showLogin();
+		return;
+	}
 	root.innerHTML = `
 		<main class="home-shell">
 			<header class="home-header"><h1>ホーム</h1><button class="profile-button" id="profile-button" aria-label="マイページ"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5" /><path d="M5 20c.7-3.4 3.1-5.2 7-5.2s6.3 1.8 7 5.2" /></svg></button></header>
@@ -725,7 +798,7 @@ function showProfile(returnAction: (() => void) | null = render): void {
 		<section class="profile-content">
 			${profileAvatarMarkup('profile-large-avatar')}
 			<h2>${!profilePublic ? '<span class="private-lock" aria-label="非公開">🔒</span>' : ''}${escapeHtml(profileName)}</h2><p class="profile-handle">${escapeHtml(ownUsername)}</p>${profileMessage ? `<p class="profile-message">${escapeHtml(profileMessage)}</p>` : ''}<p class="profile-visibility">${profilePublic ? '公開プロフィール' : '非公開プロフィール'}</p>
-			<div class="profile-stats"><button class="profile-stat-button" id="my-posts"><strong>12</strong><small>投稿</small></button><button class="profile-stat-button" id="my-connections"><strong>${connections.length}</strong><small>つながり</small></button><button class="profile-stat-button" id="my-favorites"><strong>${favorites.length}</strong><small>お気に入り</small></button><button class="profile-stat-button" id="my-friend-requests"><strong>${pendingIncoming.length}</strong><small>フレンド申請</small></button><button class="profile-stat-button" id="my-group-invites"><strong>${pendingGroupInvites.length}</strong><small>招待されたグループ</small></button></div>
+			<div class="profile-stats"><button class="profile-stat-button" id="my-posts"><strong>12</strong><small>投稿</small></button><button class="profile-stat-button" id="my-connections"><strong>${connections.length}</strong><small>フレンド</small></button><button class="profile-stat-button" id="my-favorites"><strong>${favorites.length}</strong><small>お気に入り</small></button><button class="profile-stat-button" id="my-friend-requests"><strong>${pendingIncoming.length}</strong><small>フレンド申請</small></button><button class="profile-stat-button" id="my-group-invites"><strong>${pendingGroupInvites.length}</strong><small>招待されたグループ</small></button></div>
 			<button class="profile-action" id="edit-profile">プロフィールを編集</button>
 			<section class="friend-add-section" aria-labelledby="friend-add-title">
 				<h2 id="friend-add-title">フレンド申請</h2>
@@ -796,12 +869,12 @@ function showProfile(returnAction: (() => void) | null = render): void {
 		const input = document.querySelector<HTMLInputElement>('#friend-username');
 		const status = document.querySelector<HTMLElement>('#friend-add-status');
 		const username = input?.value.trim().replace(/^@/, '').toLowerCase() ?? '';
-		const friend = friendDirectory.find((candidate) => candidate.id.toLowerCase() === username);
-		if (!friend) {
-			if (status) status.textContent = 'そのユーザー名は見つかりませんでした';
+		if (!username || username === ownUsername.slice(1).toLowerCase() || !/^[a-z0-9_]+$/.test(username)) {
+			if (status) status.textContent = '相手のユーザー名を正しく入力してください';
 			return;
 		}
-		if (connections.some((connection) => connection.id === friend.id)) {
+		const friend = getFriendById(username);
+		if (connections.some((connection) => connection.id.toLowerCase() === friend.id.toLowerCase())) {
 			if (status) status.textContent = 'すでにつながっています';
 			return;
 		}
@@ -809,7 +882,9 @@ function showProfile(returnAction: (() => void) | null = render): void {
 			if (status) status.textContent = 'すでに申請中です';
 			return;
 		}
-		friendRequests = [...friendRequests, { id: `request-${Date.now()}`, from: ownUsername, to: `@${friend.id}`, friendId: friend.id, status: 'pending' }];
+		const request = { id: `request-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, from: ownUsername, to: `@${friend.id}`, friendId: friend.id, status: 'pending' as const };
+		saveSharedFriendRequests([...getSharedFriendRequests(), request]);
+		publishFriendRequest(request);
 		saveAppState();
 		if (status) status.textContent = `${friend.name}さんへ申請を送りました。承認されるとフレンドになります`;
 		if (input) input.value = '';
@@ -817,9 +892,9 @@ function showProfile(returnAction: (() => void) | null = render): void {
 	document.querySelectorAll<HTMLButtonElement>('[data-accept-request]').forEach((button) => button.addEventListener('click', () => {
 		const request = friendRequests.find((item) => item.id === button.dataset.acceptRequest && item.status === 'pending');
 		if (!request) return;
-		const friend = friendDirectory.find((candidate) => candidate.id === request.from.replace(/^@/, ''));
-		if (!friend) return;
-		friendRequests = friendRequests.map((item) => item.id === request.id ? { ...item, status: 'accepted' } : item);
+		const friend = getFriendById(request.from.replace(/^@/, ''));
+		saveSharedFriendRequests(getSharedFriendRequests().map((item) => item.id === request.id ? { ...item, status: 'accepted' } : item));
+		acceptFriendRequestOnServer(request.id);
 		if (!connections.some((connection) => connection.id === friend.id)) connections = [...connections, { ...friend }];
 		saveAppState();
 		showProfile(profileReturnAction);
@@ -850,17 +925,17 @@ function showFriendRequests(): void {
 	root.innerHTML = `<main class="profile-posts-screen">
 		<header class="profile-header"><button class="profile-back" id="friend-requests-back" aria-label="マイページに戻る">‹</button><h1>フレンド申請</h1></header>
 		<section class="friend-request-list-page">${requests.length ? requests.map((request) => {
-			const friend = friendDirectory.find((candidate) => candidate.id === request.friendId);
-			return `<div class="incoming-request request-card"><div><strong>${escapeHtml(friend?.name ?? request.from)}</strong><small>${escapeHtml(request.from)}</small></div><button type="button" data-accept-request-page="${request.id}">承認する</button></div>`;
+			const friend = getFriendById(request.from.replace(/^@/, ''));
+			return `<div class="incoming-request request-card"><div><strong>${escapeHtml(friend.name)}</strong><small>${escapeHtml(request.from)}</small></div><button type="button" data-accept-request-page="${request.id}">承認する</button></div>`;
 		}).join('') : '<p class="empty-connections">届いているフレンド申請はありません</p>'}</section>
 	</main>`;
 	document.querySelector<HTMLButtonElement>('#friend-requests-back')?.addEventListener('click', () => showProfile());
 	document.querySelectorAll<HTMLButtonElement>('[data-accept-request-page]').forEach((button) => button.addEventListener('click', () => {
 		const request = friendRequests.find((item) => item.id === button.dataset.acceptRequestPage && item.status === 'pending');
 		if (!request) return;
-		const friend = friendDirectory.find((candidate) => candidate.id === request.friendId);
-		if (!friend) return;
-		friendRequests = friendRequests.map((item) => item.id === request.id ? { ...item, status: 'accepted' } : item);
+		const friend = getFriendById(request.from.replace(/^@/, ''));
+		saveSharedFriendRequests(getSharedFriendRequests().map((item) => item.id === request.id ? { ...item, status: 'accepted' } : item));
+		acceptFriendRequestOnServer(request.id);
 		if (!connections.some((connection) => connection.id === friend.id)) connections = [...connections, { ...friend }];
 		saveAppState();
 		showFriendRequests();
@@ -892,12 +967,12 @@ function showGroupInvites(): void {
 
 function showConnections(): void {
 	root.innerHTML = `<main class="profile-posts-screen">
-		<header class="profile-header"><button class="profile-back" id="connections-back" aria-label="マイページに戻る">‹</button><h1>つながり</h1></header>
-		<section class="connections-list">${connections.length ? connections.map((connection) => `<div class="connection-row">${friendAvatarMarkup(connection.name, connection.photo)}<div class="connection-copy"><strong>${escapeHtml(connection.name)}</strong><small>${escapeHtml(connection.message)} · @${escapeHtml(connection.id)}</small></div><button class="connection-remove" data-connection-id="${connection.id}">削除</button></div>`).join('') : '<p class="empty-connections">つながりはありません</p>'}</section>
+		<header class="profile-header"><button class="profile-back" id="connections-back" aria-label="マイページに戻る">‹</button><h1>フレンド</h1></header>
+		<section class="connections-list">${connections.length ? connections.map((connection) => `<div class="connection-row">${friendAvatarMarkup(connection.name, connection.photo)}<div class="connection-copy"><strong>${escapeHtml(connection.name)}</strong><small>${escapeHtml(connection.message)} · @${escapeHtml(connection.id)}</small></div><button class="connection-remove" data-connection-id="${connection.id}">削除</button></div>`).join('') : '<p class="empty-connections">フレンドはいません</p>'}</section>
 	</main>`;
 	document.querySelector<HTMLButtonElement>('#connections-back')?.addEventListener('click', () => showProfile());
 	document.querySelectorAll<HTMLButtonElement>('.connection-remove').forEach((button) => button.addEventListener('click', () => {
-		showDeleteConfirm('このつながりを削除しますか？', () => {
+		showDeleteConfirm('このフレンドを削除しますか？', () => {
 			connections = connections.filter((connection) => connection.id !== button.dataset.connectionId);
 			saveAppState();
 			showConnections();
@@ -920,6 +995,7 @@ function showProfileEdit(): void {
 		<form class="profile-edit-form" id="profile-edit-form">
 			<label class="edit-photo-label" for="profile-photo">${profileAvatarMarkup('edit-avatar')}<span>プロフィール写真を変更</span><input id="profile-photo" type="file" accept="image/*"></label>
 			<label class="edit-field">名前<input id="profile-name" type="text" value="${escapeHtml(profileName)}" maxlength="30" required></label>
+			<label class="edit-field">ユーザー名<input id="profile-username" type="text" value="${escapeHtml(ownUsername.replace(/^@/, ''))}" maxlength="20" pattern="[A-Za-z0-9_]+" placeholder="英数字と_が使えます" required></label>
 			<label class="edit-field">一言メッセージ<textarea id="profile-message" maxlength="100" placeholder="好きな食べ物やひとことを入力">${escapeHtml(profileMessage)}</textarea></label>
 			<label class="notification-row">通知<div class="toggle-wrap"><input id="notifications" type="checkbox" ${notificationsEnabled ? 'checked' : ''}><span class="toggle"></span></div></label>
 			<label class="notification-row">公開設定<div class="toggle-wrap"><input id="profile-public" type="checkbox" ${profilePublic ? 'checked' : ''}><span class="toggle"></span></div></label>
@@ -947,14 +1023,25 @@ function handleProfilePhoto(event: Event): void {
 function saveProfile(event: SubmitEvent): void {
 	event.preventDefault();
 	const nameInput = document.querySelector<HTMLInputElement>('#profile-name');
+	const usernameInput = document.querySelector<HTMLInputElement>('#profile-username');
 	const messageInput = document.querySelector<HTMLTextAreaElement>('#profile-message');
 	const notificationInput = document.querySelector<HTMLInputElement>('#notifications');
 	const publicInput = document.querySelector<HTMLInputElement>('#profile-public');
 	profileName = nameInput?.value.trim() || profileName;
+	const nextUsername = usernameInput?.value.trim() ?? '';
+	if (!nextUsername || !/^[A-Za-z0-9_]+$/.test(nextUsername)) {
+		usernameInput?.focus();
+		usernameInput?.setCustomValidity('ユーザー名は英数字と_のみで入力してください');
+		usernameInput?.reportValidity();
+		return;
+	}
+	usernameInput?.setCustomValidity('');
+	ownUsername = `@${nextUsername}`;
 	profileMessage = messageInput?.value.trim() ?? profileMessage;
 	notificationsEnabled = notificationInput?.checked ?? notificationsEnabled;
 	profilePublic = publicInput?.checked ?? profilePublic;
 	saveAppState();
+	publishOwnProfile();
 	showProfile();
 }
 
@@ -1058,7 +1145,7 @@ function showLogin(): void {
 				<label for="auth-nickname">ニックネーム</label>
 				<input id="auth-nickname" name="nickname" type="text" autocomplete="name" maxlength="30" placeholder="表示する名前を入力" required>
 				<label for="auth-username">ユーザー名</label>
-				<div class="auth-username-field"><span>@</span><input id="auth-username" name="username" type="text" autocomplete="username" pattern="[A-Za-z0-9]+" inputmode="text" maxlength="20" placeholder="英数字のみ" required></div>
+				<div class="auth-username-field"><span>@</span><input id="auth-username" name="username" type="text" autocomplete="username" pattern="[A-Za-z0-9_]+" inputmode="text" maxlength="20" placeholder="英数字と_が使えます" required></div>
 				<small class="auth-field-note">フレンド申請にはこのユーザー名を使います</small>
 				<label for="auth-password">パスワード</label>
 				<div class="auth-password-field"><input id="auth-password" name="password" type="password" autocomplete="current-password" placeholder="パスワードを入力" required><button class="password-toggle" id="password-toggle" type="button" aria-label="パスワードを表示"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg></button></div>
@@ -1098,26 +1185,38 @@ function showLogin(): void {
 	form.addEventListener('submit', (event) => {
 		event.preventDefault();
 		const normalizedUsername = username.value.trim();
-		if (!nickname.value.trim() || !normalizedUsername || !password.value) {
-			error.textContent = 'ニックネーム、ユーザー名、パスワードを入力してください';
+		if (!normalizedUsername || !password.value || (registerMode && !nickname.value.trim())) {
+			error.textContent = registerMode ? 'ニックネーム、ユーザー名、パスワードを入力してください' : 'ユーザー名とパスワードを入力してください';
 			return;
 		}
-		if (!/^[A-Za-z0-9]+$/.test(normalizedUsername)) {
-			error.textContent = 'ユーザー名は英数字のみ使えます';
+		if (!/^[A-Za-z0-9_]+$/.test(normalizedUsername)) {
+			error.textContent = 'ユーザー名は英数字と_のみ使えます';
 			return;
 		}
-		if (registerMode && (friendDirectory.some((friend) => friend.id.toLowerCase() === normalizedUsername.toLowerCase()) || ownUsername.slice(1).toLowerCase() === normalizedUsername.toLowerCase())) {
+		if (registerMode && (getAvailableFriends().some((friend) => friend.id.toLowerCase() === normalizedUsername.toLowerCase()) || ownUsername.slice(1).toLowerCase() === normalizedUsername.toLowerCase())) {
 			error.textContent = 'そのユーザー名は既に使われています';
 			return;
 		}
-		profileName = nickname.value.trim();
+		if (nickname.value.trim()) profileName = nickname.value.trim();
 		ownUsername = `@${normalizedUsername.toLowerCase()}`;
+		isAuthenticated = true;
+		writeTabJson('hakason-authenticated', true);
 		saveAppState();
+		publishOwnProfile();
 		render();
 	});
 }
 
 loadAppState();
+isAuthenticated = readTabJson<boolean>('hakason-authenticated') === true;
+friendRequests = getSharedFriendRequests();
+syncAcceptedFriendships();
+publishOwnProfile();
+window.addEventListener('storage', (event) => {
+	if (event.key === sharedProfilesKey || event.key === sharedFriendRequestsKey) syncSharedFriends();
+});
+window.setInterval(() => { void syncFriendRequestsFromServer(); }, 1500);
+void syncFriendRequestsFromServer();
 applyFontSize();
 render();
 void connectCloudTimeline();

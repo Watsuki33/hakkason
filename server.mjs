@@ -11,12 +11,40 @@ if (existsSync('.env')) {
 
 const port = 8787;
 const client = spawn(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'dev:client'], { stdio: 'inherit', shell: process.platform === 'win32' });
+const friendRequests = [];
 const send = (response, status, body) => {
 	response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
 	response.end(JSON.stringify(body));
 };
 
 const server = createServer(async (request, response) => {
+	if (request.url === '/api/friend-requests' && request.method === 'GET') return send(response, 200, friendRequests);
+	if (request.url === '/api/friend-requests' && request.method === 'POST') {
+		let raw = '';
+		for await (const chunk of request) raw += chunk;
+		try {
+			const friendRequest = JSON.parse(raw);
+			if (!friendRequest?.id || !friendRequest?.from || !friendRequest?.to || !friendRequest?.friendId) return send(response, 400, { error: '申請データが正しくありません。' });
+			if (!friendRequests.some((item) => item.id === friendRequest.id)) friendRequests.push({ ...friendRequest, status: 'pending' });
+			return send(response, 201, friendRequest);
+		} catch {
+			return send(response, 400, { error: '申請データを読み取れませんでした。' });
+		}
+	}
+	const friendRequestMatch = request.url?.match(/^\/api\/friend-requests\/([^/]+)$/);
+	if (friendRequestMatch && request.method === 'PATCH') {
+		let raw = '';
+		for await (const chunk of request) raw += chunk;
+		try {
+			const { status } = JSON.parse(raw);
+			const friendRequest = friendRequests.find((item) => item.id === decodeURIComponent(friendRequestMatch[1]));
+			if (!friendRequest || !['accepted', 'pending'].includes(status)) return send(response, 404, { error: '申請が見つかりません。' });
+			friendRequest.status = status;
+			return send(response, 200, friendRequest);
+		} catch {
+			return send(response, 400, { error: '申請の更新に失敗しました。' });
+		}
+	}
 	if (request.method !== 'POST' || request.url !== '/api/advice') return send(response, 404, { error: 'Not found' });
 	let raw = '';
 	for await (const chunk of request) raw += chunk;
