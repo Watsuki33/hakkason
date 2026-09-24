@@ -3,7 +3,7 @@ import './styles.css';
 type Reaction = { name: string; emoji: string; text: string; tone: string };
 type Post = { id: string; name: string; time: string; image: string; text: string; reactions: string };
 type Connection = { id: string; name: string; photo: string; message: string };
-type SavedState = { profileName: string; profileImage: string; notificationsEnabled: boolean; profileMessage: string; profilePublic: boolean; connections: Connection[]; favorites: Post[] };
+type SavedState = { profileName: string; profileImage: string; notificationsEnabled: boolean; profileMessage: string; profilePublic: boolean; connections: Connection[]; favorites: Post[]; personalPosts: Post[] };
 
 const reactions: Reaction[] = [
 	{ name: 'さくら', emoji: '🥰', text: 'おいしそう！', tone: 'peach' },
@@ -23,6 +23,8 @@ const myPosts: Post[] = [
 	{ id: 'my-post-2', name: 'あなた', time: '3日前', image: '🍛', text: 'お気に入りのカレーを食べに行ったよ', reactions: 'ゆうき 他4人' },
 	{ id: 'my-post-3', name: 'あなた', time: '1週間前', image: '🍰', text: '食後のデザートまで楽しみました', reactions: 'けん 他1人' },
 ];
+
+let personalPosts: Post[] = [...myPosts];
 
 let connections: Connection[] = [
 	{ id: 'sakura', name: 'さくら', photo: '🌸', message: 'おいしいものが好き' },
@@ -52,7 +54,7 @@ let profileMessage = '';
 let profilePublic = true;
 
 function saveAppState(): void {
-	const state: SavedState = { profileName, profileImage, notificationsEnabled, profileMessage, profilePublic, connections, favorites };
+	const state: SavedState = { profileName, profileImage, notificationsEnabled, profileMessage, profilePublic, connections, favorites, personalPosts };
 	try {
 		localStorage.setItem('hakason-app-state', JSON.stringify(state));
 	} catch {
@@ -71,6 +73,7 @@ function loadAppState(): void {
 		if (typeof state.profilePublic === 'boolean') profilePublic = state.profilePublic;
 		if (Array.isArray(state.connections)) connections = state.connections;
 		if (Array.isArray(state.favorites)) favorites = state.favorites;
+		if (Array.isArray(state.personalPosts)) personalPosts = state.personalPosts;
 	} catch {
 	}
 }
@@ -136,9 +139,10 @@ function render(): void {
 }
 
 function renderPost(post: Post): string {
+	const image = post.image.startsWith('data:image/') ? `<img src="${post.image}" alt="${escapeHtml(post.text || '食事の投稿画像')}" loading="lazy">` : post.image;
 	return `<button class="post-card" data-post-id="${post.id}">
-		<div class="post-top"><span class="post-avatar">${post.name.charAt(0)}</span><span><strong>${post.name}</strong><small>${post.time}</small></span><span class="post-more">•••</span></div>
-		<div class="post-image">${post.image}</div><p class="post-text">${post.text}</p><div class="post-reactions">♡ ${post.reactions}</div>
+		<div class="post-top"><span class="post-avatar">${escapeHtml(post.name.charAt(0))}</span><span><strong>${escapeHtml(post.name)}</strong><small>${escapeHtml(post.time)}</small></span><span class="post-more">•••</span></div>
+		<div class="post-image">${image}</div><p class="post-text">${escapeHtml(post.text)}</p><div class="post-reactions">♡ ${escapeHtml(post.reactions)}</div>
 	</button>`;
 }
 
@@ -155,9 +159,8 @@ function showAdvice(): void {
 	root.innerHTML = `<main class="home-shell advice-screen">
 		<header class="home-header"><h1>アドバイス</h1><button class="profile-button" id="advice-profile-button" aria-label="マイページ"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5" /><path d="M5 20c.7-3.4 3.1-5.2 7-5.2s6.3 1.8 7 5.2" /></svg></button></header>
 		<div class="home-scroll advice-content">
-			<section class="advice-summary"><span class="advice-icon">✿</span><p class="section-kicker">今日の食事バランス</p><h2>いいペースです</h2><p>野菜と主食のバランスがとれています。次の食事も無理なく楽しみましょう。</p></section>
-			<section class="advice-card"><span>💧</span><div><strong>水分をもう少し</strong><p>こまめに水分をとると、午後もすっきり過ごせます。</p></div></section>
-			<section class="advice-card"><span>🥕</span><div><strong>次の一歩</strong><p>次の食事に彩りのある野菜を一品加えてみましょう。</p></div></section>
+			<section class="advice-summary"><span class="advice-icon">✿</span><p class="section-kicker">Gemini 食事解析</p><h2 id="advice-title">分析中...</h2><p id="advice-summary-text">これまでの食事投稿画像を確認しています。</p></section>
+			<div id="advice-results"><section class="advice-card"><span>⌛</span><div><strong>画像を分析しています</strong><p>投稿した食事画像から、無理のないアドバイスを作成します。</p></div></section></div>
 		</div>
 		<nav class="bottom-nav" aria-label="メインメニュー">
 			<button class="nav-item" id="advice-home-button"><span>⌂</span><small>ホーム</small></button>
@@ -168,6 +171,33 @@ function showAdvice(): void {
 	</main>`;
 	document.querySelector<HTMLButtonElement>('#advice-home-button')?.addEventListener('click', render);
 	document.querySelector<HTMLButtonElement>('#advice-profile-button')?.addEventListener('click', showProfile);
+	void loadAdvice();
+}
+
+async function loadAdvice(): Promise<void> {
+	const images = personalPosts.filter((post) => post.image.startsWith('data:image/')).slice(-10).map((post) => post.image);
+	const title = document.querySelector<HTMLElement>('#advice-title');
+	const summary = document.querySelector<HTMLElement>('#advice-summary-text');
+	const results = document.querySelector<HTMLElement>('#advice-results');
+	if (!title || !summary || !results) return;
+	if (!images.length) {
+		title.textContent = '写真を投稿してみよう';
+		summary.textContent = '食事画像がまだありません。写真を投稿するとGeminiが食事の傾向を分析します。';
+		results.innerHTML = '<section class="advice-card"><span>📷</span><div><strong>食事画像が必要です</strong><p>ホームの投稿ボタンから、食事の写真を追加してください。</p></div></section>';
+		return;
+	}
+	try {
+		const response = await fetch('/api/advice', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ images }) });
+		const advice = await response.json() as { summary?: string; tips?: string[]; error?: string };
+		if (!response.ok) throw new Error(advice.error || 'AI分析に失敗しました');
+		title.textContent = advice.summary || '今日の食事アドバイス';
+		summary.textContent = '投稿画像をもとにした、日々の食事改善のヒントです。';
+		results.innerHTML = (advice.tips ?? []).map((tip, index) => `<section class="advice-card"><span>${['🥕', '💧', '🍽️'][index % 3]}</span><div><strong>おすすめ ${index + 1}</strong><p>${escapeHtml(tip)}</p></div></section>`).join('');
+	} catch (error) {
+		title.textContent = '分析できませんでした';
+		summary.textContent = error instanceof Error ? error.message : 'AI分析に失敗しました。';
+		results.innerHTML = '<section class="advice-card"><span>⚠️</span><div><strong>もう一度試してください</strong><p>Gemini側が一時的に混雑している可能性があります。少し待ってからアドバイス画面を開き直してください。</p></div></section>';
+	}
 }
 
 function showProfile(): void {
@@ -233,7 +263,7 @@ function showConnections(): void {
 function showMyPosts(): void {
 	root.innerHTML = `<main class="profile-posts-screen">
 		<header class="profile-header"><button class="profile-back" id="posts-back" aria-label="マイページに戻る">‹</button><h1>自分の投稿</h1></header>
-		<div class="profile-posts-list">${myPosts.map((post) => renderPost({ ...post, name: profileName })).join('')}</div>
+		<div class="profile-posts-list">${personalPosts.map((post) => renderPost({ ...post, name: profileName })).join('')}</div>
 	</main>`;
 	document.querySelector<HTMLButtonElement>('#posts-back')?.addEventListener('click', showProfile);
 	document.querySelectorAll<HTMLButtonElement>('.post-card').forEach((card) => card.addEventListener('click', () => card.scrollIntoView({ behavior: 'smooth', block: 'center' })));
@@ -286,6 +316,17 @@ function saveProfile(event: SubmitEvent): void {
 function showCamera(): void {
 	root.innerHTML = `<main class="camera-screen"><button class="camera-back" id="camera-back">‹ ホーム</button><div class="camera-copy"><span class="camera-icon">▣</span><h1>写真を投稿</h1><p>今日のごはんをみんなにシェアしよう</p><label class="photo-picker">写真を選ぶ<input type="file" accept="image/*" capture="environment"></label></div></main>`;
 	document.querySelector('#camera-back')?.addEventListener('click', render);
+	document.querySelector<HTMLInputElement>('.photo-picker input')?.addEventListener('change', (event) => {
+		const file = (event.currentTarget as HTMLInputElement).files?.[0];
+		if (!file) return;
+		const reader = new FileReader();
+		reader.addEventListener('load', () => {
+			personalPosts = [{ id: `my-post-${Date.now()}`, name: profileName, time: 'たった今', image: String(reader.result), text: '今日の食事', reactions: 'まだリアクションはありません' }, ...personalPosts];
+			saveAppState();
+			render();
+		});
+		reader.readAsDataURL(file);
+	});
 }
 
 loadAppState();
