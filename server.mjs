@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 
 if (existsSync('.env')) {
@@ -11,7 +11,12 @@ if (existsSync('.env')) {
 
 const port = 8787;
 const client = spawn(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'dev:client'], { stdio: 'inherit', shell: process.platform === 'win32' });
-const friendRequests = [];
+const friendRequestsFile = new URL('./friend-requests.json', import.meta.url);
+const friendRequests = existsSync(friendRequestsFile) ? JSON.parse(readFileSync(friendRequestsFile, 'utf8')) : [];
+const saveFriendRequests = () => writeFileSync(friendRequestsFile, JSON.stringify(friendRequests, null, 2));
+const groupInvitesFile = new URL('./group-invites.json', import.meta.url);
+const groupInvites = existsSync(groupInvitesFile) ? JSON.parse(readFileSync(groupInvitesFile, 'utf8')) : [];
+const saveGroupInvites = () => writeFileSync(groupInvitesFile, JSON.stringify(groupInvites, null, 2));
 const send = (response, status, body) => {
 	response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
 	response.end(JSON.stringify(body));
@@ -25,13 +30,54 @@ const server = createServer(async (request, response) => {
 		try {
 			const friendRequest = JSON.parse(raw);
 			if (!friendRequest?.id || !friendRequest?.from || !friendRequest?.to || !friendRequest?.friendId) return send(response, 400, { error: '申請データが正しくありません。' });
-			if (!friendRequests.some((item) => item.id === friendRequest.id)) friendRequests.push({ ...friendRequest, status: 'pending' });
+			if (!friendRequests.some((item) => item.id === friendRequest.id)) {
+				friendRequests.push({ ...friendRequest, status: 'pending' });
+				saveFriendRequests();
+			}
 			return send(response, 201, friendRequest);
 		} catch {
 			return send(response, 400, { error: '申請データを読み取れませんでした。' });
 		}
 	}
+	if (request.url === '/api/group-invites' && request.method === 'GET') return send(response, 200, groupInvites);
+	if (request.url === '/api/group-invites' && request.method === 'POST') {
+		let raw = '';
+		for await (const chunk of request) raw += chunk;
+		try {
+			const groupInvite = JSON.parse(raw);
+			if (!groupInvite?.id || !groupInvite?.groupId || !groupInvite?.groupName || !groupInvite?.groupImage || !groupInvite?.inviteeId || !groupInvite?.from) return send(response, 400, { error: 'グループ招待データが正しくありません。' });
+			if (!groupInvites.some((item) => item.id === groupInvite.id)) {
+				groupInvites.push({ ...groupInvite, status: 'pending' });
+				saveGroupInvites();
+			}
+			return send(response, 201, groupInvite);
+		} catch {
+			return send(response, 400, { error: 'グループ招待データを読み取れませんでした。' });
+		}
+	}
+	const groupInviteMatch = request.url?.match(/^\/api\/group-invites\/([^/]+)$/);
+	if (groupInviteMatch && request.method === 'PATCH') {
+		let raw = '';
+		for await (const chunk of request) raw += chunk;
+		try {
+			const { status } = JSON.parse(raw);
+			const groupInvite = groupInvites.find((item) => item.id === decodeURIComponent(groupInviteMatch[1]));
+			if (!groupInvite || !['accepted', 'declined', 'pending'].includes(status)) return send(response, 404, { error: 'グループ招待が見つかりません。' });
+			groupInvite.status = status;
+			saveGroupInvites();
+			return send(response, 200, groupInvite);
+		} catch {
+			return send(response, 400, { error: 'グループ招待の更新に失敗しました。' });
+		}
+	}
 	const friendRequestMatch = request.url?.match(/^\/api\/friend-requests\/([^/]+)$/);
+	if (friendRequestMatch && request.method === 'DELETE') {
+		const friendRequestIndex = friendRequests.findIndex((item) => item.id === decodeURIComponent(friendRequestMatch[1]));
+		if (friendRequestIndex < 0) return send(response, 404, { error: '申請が見つかりません。' });
+		friendRequests.splice(friendRequestIndex, 1);
+		saveFriendRequests();
+		return send(response, 204, {});
+	}
 	if (friendRequestMatch && request.method === 'PATCH') {
 		let raw = '';
 		for await (const chunk of request) raw += chunk;
@@ -40,6 +86,7 @@ const server = createServer(async (request, response) => {
 			const friendRequest = friendRequests.find((item) => item.id === decodeURIComponent(friendRequestMatch[1]));
 			if (!friendRequest || !['accepted', 'pending'].includes(status)) return send(response, 404, { error: '申請が見つかりません。' });
 			friendRequest.status = status;
+			saveFriendRequests();
 			return send(response, 200, friendRequest);
 		} catch {
 			return send(response, 400, { error: '申請の更新に失敗しました。' });

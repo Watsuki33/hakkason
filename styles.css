@@ -223,6 +223,10 @@
 .request-card > div { display:flex; flex-direction:column; gap:3px; }
 .request-card strong { color:#583d40; font-size:14px; }
 .request-card small { color:#ad9291; font-size:11px; }
+.group-invite-card { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.group-invite-summary { display:flex; min-width:0; align-items:center; gap:10px; }
+.group-invite-summary > div { min-width:0; }
+.group-invite-icon { display:grid; width:38px; height:38px; flex:0 0 38px; place-items:center; border-radius:12px; background:#fff1e9; font-size:22px; }
 .group-card { position:relative; cursor:pointer; }
 .group-cover { position:relative; }
 .group-cover-icon { line-height:1; }

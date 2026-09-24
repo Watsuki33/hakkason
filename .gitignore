@@ -3,5 +3,7 @@ dist/
 .env
 .env.*
 !.env.example
+friend-requests.json
+group-invites.json
 public/stomach-reactions-source.png
 public/stomach-reactions.png

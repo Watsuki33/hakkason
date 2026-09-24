@@ -9,7 +9,7 @@ type Post = { id: string; name: string; time: string; image: string; text: strin
 type Connection = { id: string; name: string; photo: string; message: string };
 type FriendRequest = { id: string; from: string; to: string; friendId: string; status: 'pending' | 'accepted' };
 type SharedProfile = { username: string; name: string; photo: string; message: string };
-type GroupInvite = { id: string; groupId: string; groupName: string; inviteeId: string; from: string; status: 'pending' | 'accepted' | 'declined' };
+type GroupInvite = { id: string; groupId: string; groupName: string; groupImage?: string; groupMembers?: string[]; groupVisibility?: GroupVisibility; inviteeId: string; from: string; status: 'pending' | 'accepted' | 'declined' };
 type SavedState = { profileName: string; username?: string; profileImage: string; notificationsEnabled: boolean; profileMessage: string; profilePublic: boolean; fontSize?: FontSize; connections: Connection[]; friendRequests?: FriendRequest[]; groupInvites?: GroupInvite[]; favorites: Post[]; personalPosts: Post[] };
 type Group = { id: string; name: string; image: string; members: string[]; posts: Post[]; visibility?: GroupVisibility };
 type GroupVisibility = 'public' | 'private';
@@ -75,6 +75,7 @@ let stopMessagesListener: (() => void) | null = null;
 let isAuthenticated = false;
 const sharedProfilesKey = 'hakason-shared-profiles';
 const sharedFriendRequestsKey = 'hakason-shared-friend-requests';
+const sharedGroupInvitesKey = 'hakason-shared-group-invites';
 
 function getSharedProfiles(): SharedProfile[] {
 	return readStoredJson<SharedProfile[]>(sharedProfilesKey) ?? [];
@@ -94,6 +95,10 @@ function getFriendById(id: string): Connection {
 	return getAvailableFriends().find((friend) => friend.id.toLowerCase() === id.toLowerCase()) ?? { id, name: `@${id}`, photo: '🍽️', message: '' };
 }
 
+function uniqueConnections(items: Connection[]): Connection[] {
+	return items.filter((connection, index, list) => list.findIndex((candidate) => candidate.id.toLowerCase() === connection.id.toLowerCase()) === index);
+}
+
 function getSharedFriendRequests(): FriendRequest[] {
 	return readStoredJson<FriendRequest[]>(sharedFriendRequestsKey) ?? [];
 }
@@ -103,11 +108,30 @@ function saveSharedFriendRequests(requests: FriendRequest[]): void {
 	writeStoredJson(sharedFriendRequestsKey, requests);
 }
 
+function getSharedGroupInvites(): GroupInvite[] {
+	return readStoredJson<GroupInvite[]>(sharedGroupInvitesKey) ?? [];
+}
+
+function saveSharedGroupInvites(invites: GroupInvite[]): void {
+	groupInvites = invites;
+	writeStoredJson(sharedGroupInvitesKey, invites);
+}
+
 async function syncFriendRequestsFromServer(): Promise<void> {
 	try {
 		const response = await fetch('/api/friend-requests');
 		if (!response.ok) return;
-		const requests = await response.json() as FriendRequest[];
+		const serverRequests = await response.json() as FriendRequest[];
+		const localRequests = getSharedFriendRequests();
+		const requests = [...localRequests];
+		for (const request of serverRequests) {
+			const existingIndex = requests.findIndex((item) => item.id === request.id);
+			if (existingIndex >= 0) requests[existingIndex] = request;
+			else requests.push(request);
+		}
+		if (!serverRequests.length) {
+			for (const request of localRequests.filter((item) => item.status === 'pending')) publishFriendRequest(request);
+		}
 		if (JSON.stringify(requests) === JSON.stringify(friendRequests)) return;
 		friendRequests = requests;
 		writeStoredJson(sharedFriendRequestsKey, requests);
@@ -125,6 +149,44 @@ function publishFriendRequest(request: FriendRequest): void {
 
 function acceptFriendRequestOnServer(requestId: string): void {
 	void fetch(`/api/friend-requests/${encodeURIComponent(requestId)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'accepted' }) }).catch(() => undefined);
+}
+
+function removeFriendRequestOnServer(requestId: string): void {
+	void fetch(`/api/friend-requests/${encodeURIComponent(requestId)}`, { method: 'DELETE' }).catch(() => undefined);
+}
+
+async function syncGroupInvitesFromServer(): Promise<void> {
+	try {
+		const response = await fetch('/api/group-invites');
+		if (!response.ok) return;
+		const serverInvites = await response.json() as GroupInvite[];
+		const localInvites = getSharedGroupInvites();
+		const invites = [...localInvites];
+		for (const invite of serverInvites) {
+			const existingIndex = invites.findIndex((item) => item.id === invite.id);
+			if (existingIndex >= 0) invites[existingIndex] = invite;
+			else invites.push(invite);
+		}
+		if (!serverInvites.length) {
+			for (const invite of localInvites.filter((item) => item.status === 'pending')) publishGroupInvite(invite);
+		}
+		if (JSON.stringify(invites) === JSON.stringify(groupInvites)) return;
+		groupInvites = invites;
+		writeStoredJson(sharedGroupInvitesKey, invites);
+		saveAppState();
+		if (document.querySelector('#my-group-invites')) showProfile(profileReturnAction);
+		if (document.querySelector('#group-invites-back')) showGroupInvites();
+	} catch {
+		// localStorage remains available when the development server is offline
+	}
+}
+
+function publishGroupInvite(invite: GroupInvite): void {
+	void fetch('/api/group-invites', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(invite) }).catch(() => undefined);
+}
+
+function updateGroupInviteOnServer(inviteId: string, status: GroupInvite['status']): void {
+	void fetch(`/api/group-invites/${encodeURIComponent(inviteId)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) }).catch(() => undefined);
 }
 
 function syncAcceptedFriendships(): void {
@@ -150,7 +212,9 @@ async function connectCloudTimeline(): Promise<void> {
 	if (!firebaseEnabled || stopPostsListener) return;
 	try {
 		stopPostsListener = await subscribeToPosts((cloudPosts) => {
-			posts.splice(0, posts.length, ...cloudPosts);
+			const cloudPostIds = new Set(cloudPosts.map((post) => post.id));
+			const localPosts = posts.filter((post) => !cloudPostIds.has(post.id));
+			posts.splice(0, posts.length, ...cloudPosts, ...localPosts);
 			if (document.querySelector('#timeline')) render();
 		}, () => showInfoDialog('Firebaseに接続できません', 'Firebaseの設定とFirestoreのルールを確認してください。'));
 	} catch {
@@ -159,6 +223,7 @@ async function connectCloudTimeline(): Promise<void> {
 }
 
 function saveAppState(): void {
+	connections = uniqueConnections(connections);
 	const state: SavedState = { profileName, username: ownUsername.slice(1), profileImage, notificationsEnabled, profileMessage, profilePublic, fontSize, connections, friendRequests, groupInvites, favorites, personalPosts };
 	writeTabJson('hakason-app-state', state);
 }
@@ -174,7 +239,7 @@ function loadAppState(): void {
 		if (typeof state.profileMessage === 'string') profileMessage = state.profileMessage;
 		if (typeof state.profilePublic === 'boolean') profilePublic = state.profilePublic;
 		if (state.fontSize === 'normal' || state.fontSize === 'large' || state.fontSize === 'x-large') fontSize = state.fontSize;
-		if (Array.isArray(state.connections)) connections = state.connections;
+		if (Array.isArray(state.connections)) connections = uniqueConnections(state.connections);
 		if (Array.isArray(state.friendRequests)) friendRequests = state.friendRequests;
 		if (Array.isArray(state.groupInvites)) groupInvites = state.groupInvites;
 		if (Array.isArray(state.favorites)) favorites = state.favorites;
@@ -448,13 +513,13 @@ function renderGroupCard(group: Group): string {
 }
 
 function renderGroupDetail(group: Group): void {
-	const myPost: Post = { id: `${group.id}-my-post`, name: 'たかし', time: 'あなたの投稿', image: '🍜', text: '今日のごはんを投稿しました！', reactions: 'リアクションを送る' };
+	const myPost = group.posts.find((post) => post.name === profileName) ?? { id: `${group.id}-my-post`, name: profileName, time: 'あなたの投稿', image: '🍜', text: '今日のごはんを投稿しました！', reactions: 'リアクションを送る' };
 	root.innerHTML = `<main class="home-shell group-shell">
 		<header class="home-header group-detail-header"><button class="header-back" id="group-back" aria-label="グループ一覧に戻る">‹</button><h1>タイムライン</h1><button class="profile-button" id="group-detail-profile-button" aria-label="マイページ"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5" /><path d="M5 20c.7-3.4 3.1-5.2 7-5.2s6.3 1.8 7 5.2" /></svg></button></header>
 		<div class="group-scroll group-posts-scroll">
 			<div class="timeline-group-name"><span class="post-avatar">${group.name.charAt(0)}</span><strong>${group.name}</strong></div>
 			<div class="group-member-summary"><strong>メンバー</strong><span>${group.members.map((member) => escapeHtml(member)).join('、')}</span></div>
-			<div class="timeline-post-list"><section class="my-post-pin"><p class="pin-label">あなたの投稿</p>${renderTimelinePost(myPost, true)}</section>${group.posts.map((post) => renderTimelinePost(post, false)).join('')}</div>
+			<div class="timeline-post-list"><section class="my-post-pin"><p class="pin-label">あなたの投稿</p>${renderTimelinePost(myPost, true)}</section>${group.posts.filter((post) => post.id !== myPost.id).map((post) => renderTimelinePost(post, false)).join('')}</div>
 		</div>
 		${renderNav('groups')}
 	</main>`;
@@ -643,7 +708,7 @@ function showGroupMenu(group: Group): void {
 }
 
 function showInviteGroupMemberDialog(group: Group): void {
-	const availableFriends = friendDirectory.filter((friend) => !group.members.includes(friend.name));
+	const availableFriends = connections.filter((friend) => !group.members.includes(friend.name));
 	const dialog = document.createElement('div');
 	dialog.className = 'group-dialog-backdrop';
 	dialog.innerHTML = `<section class="group-dialog" role="dialog" aria-modal="true" aria-labelledby="member-dialog-title">
@@ -656,10 +721,13 @@ function showInviteGroupMemberDialog(group: Group): void {
 	dialog.querySelector<HTMLButtonElement>('#confirm-group-members')?.addEventListener('click', () => {
 		const selected = Array.from(dialog.querySelectorAll<HTMLInputElement>('input[name="new-group-member"]:checked')).map((input) => input.value);
 		selected.forEach((memberName) => {
-			const friend = friendDirectory.find((candidate) => candidate.name === memberName);
+			const friend = connections.find((candidate) => candidate.name === memberName);
 			if (!friend || groupInvites.some((invite) => invite.groupId === group.id && invite.inviteeId === friend.id && invite.status === 'pending')) return;
-			groupInvites = [...groupInvites, { id: `group-invite-${Date.now()}-${friend.id}`, groupId: group.id, groupName: group.name, inviteeId: friend.id, from: ownUsername, status: 'pending' }];
+			const invite: GroupInvite = { id: `group-invite-${Date.now()}-${friend.id}`, groupId: group.id, groupName: group.name, groupImage: group.image, groupMembers: group.members, groupVisibility: group.visibility, inviteeId: friend.id, from: ownUsername, status: 'pending' };
+			groupInvites = [...groupInvites, invite];
+			publishGroupInvite(invite);
 		});
+		saveSharedGroupInvites(groupInvites);
 		saveAppState();
 		dialog.remove();
 		renderGroups();
@@ -668,7 +736,7 @@ function showInviteGroupMemberDialog(group: Group): void {
 }
 
 function addGroup(): void {
-	const friends = [...new Set([...reactions.map((reaction) => reaction.name), 'けん', 'みさき'])];
+	const friends = connections;
 	const dialog = document.createElement('div');
 	dialog.className = 'group-dialog-backdrop';
 	dialog.innerHTML = `<section class="group-dialog" role="dialog" aria-modal="true" aria-labelledby="group-dialog-title">
@@ -681,7 +749,7 @@ function addGroup(): void {
 			<label class="group-visibility-option"><input type="radio" name="group-visibility" value="private"><span>非公開</span><small>招待した人だけが参加できます</small></label>
 		</div>
 		<div class="group-friends-heading"><strong>フレンドを招待</strong><small>あとから追加することもできます</small></div>
-		<div class="group-friend-list">${friends.map((friend) => `<label class="group-friend-option"><input type="checkbox" name="group-friend" value="${friend}"><span class="friend-avatar">${friend.charAt(0)}</span><strong>${friend}</strong><span class="friend-check">✓</span></label>`).join('')}</div>
+		<div class="group-friend-list">${friends.length ? friends.map((friend) => `<label class="group-friend-option"><input type="checkbox" name="group-friend" value="${escapeHtml(friend.name)}"><span class="friend-avatar">${escapeHtml(friend.photo)}</span><strong>${escapeHtml(friend.name)}</strong><span class="friend-check">✓</span></label>`).join('') : '<p class="empty-connections">マイページにフレンドがいません</p>'}</div>
 		<button class="group-create-button" id="create-group">グループを作成する</button>
 	</section>`;
 	document.body.appendChild(dialog);
@@ -704,7 +772,17 @@ function createGroup(): void {
 	const members = Array.from(document.querySelectorAll<HTMLInputElement>('input[name="group-friend"]:checked')).map((input) => input.value);
 	const visibilityInput = document.querySelector<HTMLInputElement>('input[name="group-visibility"]:checked');
 	const visibility: GroupVisibility = visibilityInput?.value === 'private' ? 'private' : 'public';
-	groups.push({ id: `group-${Date.now()}`, name, image: '👨‍👩‍👧', members: ['たかし', ...members], posts: [], visibility });
+	const group: Group = { id: `group-${Date.now()}`, name, image: '👨‍👩‍👧', members: [profileName], posts: [], visibility };
+	groups.push(group);
+	members.forEach((memberName, index) => {
+		const friend = connections.find((connection) => connection.name === memberName);
+		if (!friend) return;
+		const invite: GroupInvite = { id: `${group.id}-invite-${index}-${friend.id}`, groupId: group.id, groupName: group.name, groupImage: group.image, groupMembers: group.members, groupVisibility: group.visibility, inviteeId: friend.id, from: ownUsername, status: 'pending' };
+		groupInvites = [...groupInvites, invite];
+		publishGroupInvite(invite);
+	});
+	saveSharedGroupInvites(groupInvites);
+	saveAppState();
 	document.querySelector('.group-dialog-backdrop')?.remove();
 	renderGroups();
 }
@@ -804,7 +882,7 @@ function showProfile(returnAction: (() => void) | null = render): void {
 		<section class="profile-content">
 			${profileAvatarMarkup('profile-large-avatar')}
 			<h2>${!profilePublic ? '<span class="private-lock" aria-label="非公開">🔒</span>' : ''}${escapeHtml(profileName)}</h2><p class="profile-handle">${escapeHtml(ownUsername)}</p>${profileMessage ? `<p class="profile-message">${escapeHtml(profileMessage)}</p>` : ''}<p class="profile-visibility">${profilePublic ? '公開プロフィール' : '非公開プロフィール'}</p>
-			<div class="profile-stats"><button class="profile-stat-button" id="my-posts"><strong>12</strong><small>投稿</small></button><button class="profile-stat-button" id="my-connections"><strong>${connections.length}</strong><small>フレンド</small></button><button class="profile-stat-button" id="my-favorites"><strong>${favorites.length}</strong><small>お気に入り</small></button><button class="profile-stat-button" id="my-friend-requests"><strong>${pendingIncoming.length}</strong><small>フレンド申請</small></button><button class="profile-stat-button" id="my-group-invites"><strong>${pendingGroupInvites.length}</strong><small>招待されたグループ</small></button></div>
+			<div class="profile-stats"><button class="profile-stat-button" id="my-posts"><strong>12</strong><small>投稿</small></button><button class="profile-stat-button" id="my-connections"><strong>${uniqueConnections(connections).length}</strong><small>フレンド</small></button><button class="profile-stat-button" id="my-favorites"><strong>${favorites.length}</strong><small>お気に入り</small></button><button class="profile-stat-button" id="my-friend-requests"><strong>${pendingIncoming.length}</strong><small>フレンド申請</small></button><button class="profile-stat-button" id="my-group-invites"><strong>${pendingGroupInvites.length}</strong><small>招待されたグループ</small></button></div>
 			<button class="profile-action" id="edit-profile">プロフィールを編集</button>
 			<section class="friend-add-section" aria-labelledby="friend-add-title">
 				<h2 id="friend-add-title">フレンド申請</h2>
@@ -884,6 +962,10 @@ function showProfile(returnAction: (() => void) | null = render): void {
 			if (status) status.textContent = 'すでにつながっています';
 			return;
 		}
+		if (friendRequests.some((request) => request.status === 'accepted' && ((request.from === ownUsername && request.to === `@${friend.id}`) || (request.to === ownUsername && request.from === `@${friend.id}`)))) {
+			if (status) status.textContent = 'すでにフレンドです';
+			return;
+		}
 		if (friendRequests.some((request) => request.from === ownUsername && request.friendId === friend.id && request.status === 'pending')) {
 			if (status) status.textContent = 'すでに申請中です';
 			return;
@@ -952,34 +1034,50 @@ function showGroupInvites(): void {
 	const invites = groupInvites.filter((invite) => invite.inviteeId === ownUsername.replace('@', '') && invite.status === 'pending');
 	root.innerHTML = `<main class="profile-posts-screen">
 		<header class="profile-header"><button class="profile-back" id="group-invites-back" aria-label="マイページに戻る">‹</button><h1>招待されたグループ</h1></header>
-		<section class="friend-request-list-page">${invites.length ? invites.map((invite) => `<div class="incoming-request request-card"><div><strong>${escapeHtml(invite.groupName)}</strong><small>${escapeHtml(invite.from)} からの招待</small></div><div class="invite-actions"><button type="button" data-accept-group-invite="${invite.id}">参加する</button><button type="button" class="decline" data-decline-group-invite="${invite.id}">辞退</button></div></div>`).join('') : '<p class="empty-connections">届いているグループ招待はありません</p>'}</section>
+		<section class="friend-request-list-page">${invites.length ? invites.map((invite) => `<div class="incoming-request request-card group-invite-card"><div class="group-invite-summary"><span class="group-invite-icon" aria-hidden="true">${escapeHtml(invite.groupImage || '👥')}</span><div><strong>${escapeHtml(invite.groupName)}</strong><small>${escapeHtml(invite.from)} からの招待</small></div></div><div class="invite-actions"><button type="button" data-accept-group-invite="${invite.id}">承認</button><button type="button" class="decline" data-decline-group-invite="${invite.id}">拒否</button></div></div>`).join('') : '<p class="empty-connections">届いているグループ招待はありません</p>'}</section>
 	</main>`;
 	document.querySelector<HTMLButtonElement>('#group-invites-back')?.addEventListener('click', () => showProfile());
 	document.querySelectorAll<HTMLButtonElement>('[data-accept-group-invite]').forEach((button) => button.addEventListener('click', () => {
 		const invite = groupInvites.find((item) => item.id === button.dataset.acceptGroupInvite && item.status === 'pending');
 		if (!invite) return;
 		const group = groups.find((item) => item.id === invite.groupId);
-		if (group && !group.members.includes(profileName)) group.members.push(profileName);
+		if (group) {
+			if (!group.members.includes(profileName)) group.members.push(profileName);
+		} else {
+			groups.push({ id: invite.groupId, name: invite.groupName, image: invite.groupImage || '👥', members: [...(invite.groupMembers ?? []).filter((member) => member !== profileName), profileName], posts: [], visibility: invite.groupVisibility });
+		}
 		groupInvites = groupInvites.map((item) => item.id === invite.id ? { ...item, status: 'accepted' } : item);
+		saveSharedGroupInvites(groupInvites);
+		updateGroupInviteOnServer(invite.id, 'accepted');
 		saveAppState();
 		showGroupInvites();
 	}));
 	document.querySelectorAll<HTMLButtonElement>('[data-decline-group-invite]').forEach((button) => button.addEventListener('click', () => {
-		groupInvites = groupInvites.map((item) => item.id === button.dataset.declineGroupInvite ? { ...item, status: 'declined' } : item);
+		const invite = groupInvites.find((item) => item.id === button.dataset.declineGroupInvite && item.status === 'pending');
+		if (!invite) return;
+		groupInvites = groupInvites.map((item) => item.id === invite.id ? { ...item, status: 'declined' } : item);
+		saveSharedGroupInvites(groupInvites);
+		updateGroupInviteOnServer(invite.id, 'declined');
 		saveAppState();
 		showGroupInvites();
 	}));
 }
 
 function showConnections(): void {
+	const uniqueFriendConnections = uniqueConnections(connections);
 	root.innerHTML = `<main class="profile-posts-screen">
 		<header class="profile-header"><button class="profile-back" id="connections-back" aria-label="マイページに戻る">‹</button><h1>フレンド</h1></header>
-		<section class="connections-list">${connections.length ? connections.map((connection) => `<div class="connection-row">${friendAvatarMarkup(connection.name, connection.photo)}<div class="connection-copy"><strong>${escapeHtml(connection.name)}</strong><small>${escapeHtml(connection.message)} · @${escapeHtml(connection.id)}</small></div><button class="connection-remove" data-connection-id="${connection.id}">削除</button></div>`).join('') : '<p class="empty-connections">フレンドはいません</p>'}</section>
+		<section class="connections-list">${uniqueFriendConnections.length ? uniqueFriendConnections.map((connection) => `<div class="connection-row">${friendAvatarMarkup(connection.name, connection.photo)}<div class="connection-copy"><strong>${escapeHtml(connection.name)}</strong><small>${escapeHtml(connection.message)} · @${escapeHtml(connection.id)}</small></div><button class="connection-remove" data-connection-id="${connection.id}">削除</button></div>`).join('') : '<p class="empty-connections">フレンドはいません</p>'}</section>
 	</main>`;
 	document.querySelector<HTMLButtonElement>('#connections-back')?.addEventListener('click', () => showProfile());
 	document.querySelectorAll<HTMLButtonElement>('.connection-remove').forEach((button) => button.addEventListener('click', () => {
 		showDeleteConfirm('このフレンドを削除しますか？', () => {
-			connections = connections.filter((connection) => connection.id !== button.dataset.connectionId);
+			const connectionId = button.dataset.connectionId;
+			const removedRequests = friendRequests.filter((request) => request.status === 'accepted' && ((request.from === ownUsername && request.friendId === connectionId) || (request.to === ownUsername && request.from.replace(/^@/, '') === connectionId)));
+			connections = connections.filter((connection) => connection.id !== connectionId);
+			friendRequests = friendRequests.filter((request) => !removedRequests.includes(request));
+			saveSharedFriendRequests(friendRequests);
+			removedRequests.forEach((request) => removeFriendRequestOnServer(request.id));
 			saveAppState();
 			showConnections();
 		});
@@ -1075,6 +1173,14 @@ function showCamera(): void {
 		const image = preview.querySelector<HTMLImageElement>('img');
 		if (image) image.style.transform = `rotate(${rotation}deg)`;
 	};
+	const addPostToLocalFeeds = (post: Post): void => {
+		posts.unshift(post);
+		personalPosts.unshift({ ...post, reactions: 'まだリアクションはありません' });
+		groups.filter((group) => group.members.includes(profileName)).forEach((group) => {
+			group.posts = [post, ...group.posts.filter((groupPost) => groupPost.id !== post.id)];
+		});
+		saveAppState();
+	};
 	input.addEventListener('change', () => {
 		const file = input.files?.[0];
 		if (!file) return;
@@ -1101,17 +1207,22 @@ function showCamera(): void {
 	}));
 	document.querySelector<HTMLButtonElement>('#rotate-photo')?.addEventListener('click', () => { rotation = (rotation + 90) % 360; updatePreview(); });
 	publish.addEventListener('click', async () => {
+		publish.disabled = true;
+		publish.textContent = '投稿中...';
 		const text = document.querySelector<HTMLTextAreaElement>('#post-comment')?.value.trim() || '今日のごはんを投稿しました！';
 		const postedAt = new Date().toISOString();
 		const post = { id: `post-${Date.now()}`, name: profileName, time: 'たった今', image: selectedImage, text, reactions: 'リアクションを送る', postedAt };
 		try {
-			const savedPost = await createCloudPost(post);
-			posts.unshift(savedPost);
-			personalPosts.unshift({ ...savedPost, reactions: 'まだリアクションはありません' });
-			saveAppState();
+			const savedPost = await Promise.race([
+				createCloudPost(post),
+				new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error('投稿の保存がタイムアウトしました')), 5000)),
+			]);
+			addPostToLocalFeeds(savedPost);
 			render();
 		} catch {
-			showInfoDialog('投稿できませんでした', 'Firebaseの設定、Storage、Firestoreのルールを確認してください。');
+			addPostToLocalFeeds(post);
+			render();
+			showInfoDialog('この端末に投稿しました', 'クラウドへの画像保存に失敗したため、この端末のタイムラインと参加中のグループに反映しました。Firebase StorageのCORS設定を確認してください。');
 		}
 	});
 	document.querySelector('#camera-back')?.addEventListener('click', render);
@@ -1216,13 +1327,21 @@ function showLogin(): void {
 loadAppState();
 isAuthenticated = readTabJson<boolean>('hakason-authenticated') === true;
 friendRequests = getSharedFriendRequests();
+groupInvites = getSharedGroupInvites();
 syncAcceptedFriendships();
 publishOwnProfile();
 window.addEventListener('storage', (event) => {
 	if (event.key === sharedProfilesKey || event.key === sharedFriendRequestsKey) syncSharedFriends();
+	if (event.key === sharedGroupInvitesKey) {
+		groupInvites = getSharedGroupInvites();
+		if (document.querySelector('#my-group-invites')) showProfile(profileReturnAction);
+		if (document.querySelector('#group-invites-back')) showGroupInvites();
+	}
 });
 window.setInterval(() => { void syncFriendRequestsFromServer(); }, 1500);
+window.setInterval(() => { void syncGroupInvitesFromServer(); }, 1500);
 void syncFriendRequestsFromServer();
+void syncGroupInvitesFromServer();
 applyFontSize();
 render();
 void connectCloudTimeline();
