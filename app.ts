@@ -1,10 +1,13 @@
 import './styles.css';
 
 type Reaction = { name: string; stamp: string; text: string; tone: string };
-type Post = { id: string; name: string; time: string; image: string; text: string; reactions: string };
+type FontSize = 'normal' | 'large' | 'x-large';
+type Post = { id: string; name: string; time: string; image: string; text: string; reactions: string; postedAt?: string };
 type Connection = { id: string; name: string; photo: string; message: string };
-type SavedState = { profileName: string; profileImage: string; notificationsEnabled: boolean; profileMessage: string; profilePublic: boolean; connections: Connection[]; favorites: Post[]; personalPosts: Post[] };
-type Group = { id: string; name: string; image: string; members: string[]; posts: Post[] };
+type FriendRequest = { id: string; from: string; to: string; friendId: string; status: 'pending' | 'accepted' };
+type SavedState = { profileName: string; profileImage: string; notificationsEnabled: boolean; profileMessage: string; profilePublic: boolean; fontSize?: FontSize; connections: Connection[]; friendRequests?: FriendRequest[]; favorites: Post[]; personalPosts: Post[] };
+type Group = { id: string; name: string; image: string; members: string[]; posts: Post[]; visibility?: GroupVisibility };
+type GroupVisibility = 'public' | 'private';
 type SentReaction = { recipient: string; emoji: string; stamp: string; postText: string };
 
 const reactions: Reaction[] = [
@@ -47,6 +50,15 @@ const friendMessages: Record<string, string> = {
 	けん: 'みんなでごはん',
 	みさき: '料理に挑戦中',
 };
+const friendDirectory: Connection[] = [
+	{ id: 'sakura', name: 'さくら', photo: '🌸', message: 'おいしいものが好き' },
+	{ id: 'yuki', name: 'ゆうき', photo: '☕', message: 'カフェ巡り中' },
+	{ id: 'ken', name: 'けん', photo: '🍙', message: 'みんなでごはん' },
+	{ id: 'misaki', name: 'みさき', photo: '🍓', message: '料理に挑戦中' },
+	{ id: 'mei', name: 'めい', photo: '🍎', message: '食べ歩きが好き' },
+];
+
+const ownUsername = '@my_gohan';
 
 const root = document.querySelector<HTMLDivElement>('#app')!;
 let profileName = 'あなた';
@@ -54,10 +66,12 @@ let profileImage = '';
 let notificationsEnabled = true;
 let profileMessage = '';
 let profilePublic = true;
+let fontSize: FontSize = 'normal';
+let friendRequests: FriendRequest[] = [];
 let profileReturnAction: (() => void) | null = render;
 
 function saveAppState(): void {
-	const state: SavedState = { profileName, profileImage, notificationsEnabled, profileMessage, profilePublic, connections, favorites, personalPosts };
+	const state: SavedState = { profileName, profileImage, notificationsEnabled, profileMessage, profilePublic, fontSize, connections, friendRequests, favorites, personalPosts };
 	try {
 		localStorage.setItem('hakason-app-state', JSON.stringify(state));
 	} catch {
@@ -74,11 +88,17 @@ function loadAppState(): void {
 		if (typeof state.notificationsEnabled === 'boolean') notificationsEnabled = state.notificationsEnabled;
 		if (typeof state.profileMessage === 'string') profileMessage = state.profileMessage;
 		if (typeof state.profilePublic === 'boolean') profilePublic = state.profilePublic;
+		if (state.fontSize === 'normal' || state.fontSize === 'large' || state.fontSize === 'x-large') fontSize = state.fontSize;
 		if (Array.isArray(state.connections)) connections = state.connections;
+		if (Array.isArray(state.friendRequests)) friendRequests = state.friendRequests;
 		if (Array.isArray(state.favorites)) favorites = state.favorites;
 		if (Array.isArray(state.personalPosts)) personalPosts = state.personalPosts;
 	} catch {
 	}
+}
+
+function applyFontSize(): void {
+	root.dataset.fontSize = fontSize;
 }
 
 function escapeHtml(value: string): string {
@@ -175,33 +195,35 @@ function writeCalendarWeekData(weekStart: Date, entries: CalendarEntry[]): void 
 	window.localStorage.setItem(key, JSON.stringify(map));
 }
 
+function getPostDate(post: Post): Date {
+	if (post.postedAt) {
+		const postedAt = new Date(post.postedAt);
+		if (!Number.isNaN(postedAt.getTime())) return postedAt;
+	}
+	const date = new Date();
+	if (post.time === '昨日') date.setDate(date.getDate() - 1);
+	else {
+		const daysAgo = post.time.match(/(\d+)日前/);
+		if (daysAgo) date.setDate(date.getDate() - Number(daysAgo[1]));
+		else if (post.time === '1週間前') date.setDate(date.getDate() - 7);
+	}
+	return date;
+}
+
+function getPostedMealCount(date: Date): number {
+	const dateKey = formatDateKey(date);
+	return personalPosts.filter((post) => formatDateKey(getPostDate(post)) === dateKey).length;
+}
+
 function buildCalendarEntries(weekStart: Date): CalendarEntry[] {
-	const stored = readCalendarWeekData(weekStart);
 	const days = getCalendarWeekDates(weekStart);
-	const legacySeed = [1, 1.5, 1, 1, 1.6, 1.2, 1.1];
-	const hasStoredEntries = Object.keys(stored).length > 0;
-	const hasLegacySeed = days.every((date, index) => {
-		const dateKey = formatDateKey(date);
-		return Number(stored[dateKey]) === legacySeed[index];
-	});
 
 	const initialized = days.map((date, index) => {
 		const emojis = ['🍽️', '🍜', '🥗', '🍙', '🍜', '🥗', '🥳'];
 		const label = `${date.getDate()}日 (${['日', '月', '火', '水', '木', '金', '土'][date.getDay()]})`;
-		const dateKey = formatDateKey(date);
-		const amount = Number.isFinite(stored[dateKey]) ? Math.round(Number(stored[dateKey])) : 0;
+		const amount = getPostedMealCount(date);
 		return { label, emoji: emojis[index], accent: getCalendarAccent(amount), amount, date };
 	});
-	const resetEntries = initialized.map((entry) => ({ ...entry, amount: 0, accent: getCalendarAccent(0) }));
-
-	if (!hasStoredEntries || hasLegacySeed) {
-		writeCalendarWeekData(weekStart, hasLegacySeed ? resetEntries : initialized);
-	}
-
-	if (hasLegacySeed) {
-		return resetEntries;
-	}
-
 	return initialized;
 }
 
@@ -287,7 +309,7 @@ function renderCalendar(): void {
 							<label class="calendar-amount-field">
 								<span>食べた量</span>
 								<div class="calendar-amount-row">
-									<input class="calendar-amount-input" type="number" min="0" max="5" step="1" value="${day.amount}" data-index="${index}" aria-label="${day.label}の食べた量">
+									<span class="calendar-amount-input" aria-label="${day.label}の食べた量">${day.amount}</span>
 									<span>食</span>
 								</div>
 							</label>
@@ -325,7 +347,7 @@ function renderGroups(): void {
 
 function renderGroupCard(group: Group): string {
 	return `<button class="group-card" data-group-id="${group.id}">
-		<div class="group-cover">${group.image}<strong>${group.name}</strong></div>
+		<div class="group-cover">${group.image}<strong>${group.name}</strong><small class="group-visibility">${group.visibility === 'private' ? '🔒 非公開' : '公開'}</small></div>
 		<div class="group-members">${group.members.map((member) => `<span title="${member}">${member.charAt(0)}</span>`).join('')}</div>
 	</button>`;
 }
@@ -387,20 +409,6 @@ function bindEvents(): void {
 		if (screen === 'calendar') renderCalendar();
 	}));
 	document.querySelectorAll<HTMLButtonElement>('.reaction-bubble').forEach((bubble) => bubble.addEventListener('click', () => bubble.classList.toggle('selected')));
-	document.querySelectorAll<HTMLInputElement>('.calendar-amount-input').forEach((input) => {
-		input.addEventListener('change', () => {
-			const index = Number(input.dataset.index ?? '0');
-			const amount = Math.round(Number(input.value || 0));
-			calendarEntries[index].amount = amount;
-			calendarEntries[index].accent = getCalendarAccent(amount);
-			writeCalendarWeekData(calendarWeekStart, calendarEntries);
-			const dayCard = input.closest('.calendar-day');
-			dayCard?.classList.remove('blue', 'pink', 'orange');
-			dayCard?.classList.add(calendarEntries[index].accent);
-			const summary = document.querySelector<HTMLElement>('.message-mini-text');
-			if (summary) summary.textContent = `今週の合計: ${calendarEntries.reduce((total, entry) => total + entry.amount, 0).toFixed(1)}食`;
-		});
-	});
 	document.querySelector<HTMLButtonElement>('#calendar-prev')?.addEventListener('click', () => {
 		calendarWeekStart = new Date(calendarWeekStart);
 		calendarWeekStart.setDate(calendarWeekStart.getDate() - 7);
@@ -514,6 +522,11 @@ function addGroup(): void {
 		<div class="group-dialog-header"><div><p class="dialog-kicker">NEW GROUP</p><h2 id="group-dialog-title">グループを作成</h2></div><button class="dialog-close" id="cancel-group" aria-label="閉じる">×</button></div>
 		<label class="group-field-label" for="group-name">グループ名</label>
 		<input class="group-name-input" id="group-name" type="text" maxlength="30" placeholder="例：週末ごはん会">
+		<span class="group-field-label">公開設定</span>
+		<div class="group-visibility-options" role="radiogroup" aria-label="グループの公開設定">
+			<label class="group-visibility-option"><input type="radio" name="group-visibility" value="public" checked><span>公開</span><small>みんなが見つけられます</small></label>
+			<label class="group-visibility-option"><input type="radio" name="group-visibility" value="private"><span>非公開</span><small>招待した人だけが参加できます</small></label>
+		</div>
 		<div class="group-friends-heading"><strong>フレンドを招待</strong><small>あとから追加することもできます</small></div>
 		<div class="group-friend-list">${friends.map((friend) => `<label class="group-friend-option"><input type="checkbox" name="group-friend" value="${friend}"><span class="friend-avatar">${friend.charAt(0)}</span><strong>${friend}</strong><span class="friend-check">✓</span></label>`).join('')}</div>
 		<button class="group-create-button" id="create-group">グループを作成する</button>
@@ -536,7 +549,9 @@ function createGroup(): void {
 		return;
 	}
 	const members = Array.from(document.querySelectorAll<HTMLInputElement>('input[name="group-friend"]:checked')).map((input) => input.value);
-	groups.push({ id: `group-${Date.now()}`, name, image: '👨‍👩‍👧', members: ['たかし', ...members], posts: [] });
+	const visibilityInput = document.querySelector<HTMLInputElement>('input[name="group-visibility"]:checked');
+	const visibility: GroupVisibility = visibilityInput?.value === 'private' ? 'private' : 'public';
+	groups.push({ id: `group-${Date.now()}`, name, image: '👨‍👩‍👧', members: ['たかし', ...members], posts: [], visibility });
 	document.querySelector('.group-dialog-backdrop')?.remove();
 	renderGroups();
 }
@@ -612,14 +627,34 @@ async function loadAdvice(): Promise<void> {
 
 function showProfile(returnAction: (() => void) | null = render): void {
 	profileReturnAction = returnAction ?? render;
+	const pendingOutgoing = friendRequests.filter((request) => request.from === ownUsername && request.status === 'pending');
+	const pendingIncoming = friendRequests.filter((request) => request.to === ownUsername && request.status === 'pending');
 	root.innerHTML = `<main class="home-shell profile-screen">
 		<header class="home-header"><button class="profile-back" id="profile-back" aria-label="前の画面に戻る">‹</button><h1>マイページ</h1><button class="profile-button" aria-label="マイページ"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5" /><path d="M5 20c.7-3.4 3.1-5.2 7-5.2s6.3 1.8 7 5.2" /></svg></button></header>
 		<div class="home-scroll">
 		<section class="profile-content">
 			${profileAvatarMarkup('profile-large-avatar')}
 			<h2>${!profilePublic ? '<span class="private-lock" aria-label="非公開">🔒</span>' : ''}${escapeHtml(profileName)}</h2><p class="profile-handle">@my_gohan</p>${profileMessage ? `<p class="profile-message">${escapeHtml(profileMessage)}</p>` : ''}<p class="profile-visibility">${profilePublic ? '公開プロフィール' : '非公開プロフィール'}</p>
-			<div class="profile-stats"><button class="profile-stat-button" id="my-posts"><strong>12</strong><small>投稿</small></button><button class="profile-stat-button" id="my-connections"><strong>${connections.length}</strong><small>つながり</small></button><button class="profile-stat-button" id="my-favorites"><strong>${favorites.length}</strong><small>お気に入り</small></button></div>
+			<div class="profile-stats"><button class="profile-stat-button" id="my-posts"><strong>12</strong><small>投稿</small></button><button class="profile-stat-button" id="my-connections"><strong>${connections.length}</strong><small>つながり</small></button><button class="profile-stat-button" id="my-favorites"><strong>${favorites.length}</strong><small>お気に入り</small></button><button class="profile-stat-button" id="my-friend-requests"><strong>${pendingIncoming.length}</strong><small>フレンド申請</small></button></div>
 			<button class="profile-action" id="edit-profile">プロフィールを編集</button>
+			<section class="friend-add-section" aria-labelledby="friend-add-title">
+				<h2 id="friend-add-title">フレンド申請</h2>
+				<div class="my-username-row"><span>あなたのユーザー名</span><strong>${ownUsername}</strong><button type="button" id="copy-username">コピー</button></div>
+				<form class="friend-add-form" id="friend-add-form">
+					<label for="friend-username">相手のユーザー名</label>
+					<div><input id="friend-username" type="text" placeholder="例：@sakura" autocomplete="off"><button type="submit">申請を送る</button></div>
+					<p id="friend-add-status" aria-live="polite"></p>
+				</form>
+				${pendingOutgoing.length ? `<div class="pending-request-list"><strong>送信した申請</strong>${pendingOutgoing.map((request) => `<p>@${request.friendId} <span>承認待ち</span></p>`).join('')}</div>` : ''}
+			</section>
+			${pendingIncoming.length ? `<section class="incoming-request-section"><h2>届いている申請</h2>${pendingIncoming.map((request) => `<div class="incoming-request"><span>@${request.from.replace('@', '')}</span><button type="button" data-accept-request="${request.id}">承認する</button></div>`).join('')}</section>` : ''}
+			<section class="font-size-settings" aria-labelledby="font-size-title">
+				<h2 id="font-size-title">文字の大きさ</h2>
+				<p>読みやすい大きさを選べます</p>
+				<div class="font-size-options" role="group" aria-label="文字の大きさ">
+					${([['normal', '標準'], ['large', '大きめ'], ['x-large', 'かなり大きめ']] as const).map(([value, label]) => `<button class="font-size-option ${fontSize === value ? 'active' : ''}" data-font-size="${value}" aria-pressed="${fontSize === value}">${label}</button>`).join('')}
+				</div>
+			</section>
 		</section>
 		</div>
 		<nav class="bottom-nav" aria-label="メインメニュー">
@@ -643,7 +678,61 @@ function showProfile(returnAction: (() => void) | null = render): void {
 	document.querySelector<HTMLButtonElement>('#my-posts')?.addEventListener('click', showMyPosts);
 	document.querySelector<HTMLButtonElement>('#my-connections')?.addEventListener('click', showConnections);
 	document.querySelector<HTMLButtonElement>('#my-favorites')?.addEventListener('click', showFavorites);
+	document.querySelector<HTMLButtonElement>('#my-friend-requests')?.addEventListener('click', showFriendRequests);
 	document.querySelector<HTMLButtonElement>('#edit-profile')?.addEventListener('click', showProfileEdit);
+	document.querySelectorAll<HTMLButtonElement>('[data-font-size]').forEach((button) => button.addEventListener('click', () => {
+			const nextFontSize = button.dataset.fontSize;
+			if (nextFontSize !== 'normal' && nextFontSize !== 'large' && nextFontSize !== 'x-large') return;
+			fontSize = nextFontSize;
+			applyFontSize();
+			saveAppState();
+			document.querySelectorAll<HTMLButtonElement>('[data-font-size]').forEach((option) => {
+				const isActive = option.dataset.fontSize === fontSize;
+				option.classList.toggle('active', isActive);
+				option.setAttribute('aria-pressed', String(isActive));
+			});
+		}));
+	document.querySelector<HTMLButtonElement>('#copy-username')?.addEventListener('click', async () => {
+		try {
+			await navigator.clipboard.writeText(ownUsername);
+			document.querySelector<HTMLElement>('#friend-add-status')!.textContent = 'ユーザー名をコピーしました';
+		} catch {
+			document.querySelector<HTMLElement>('#friend-add-status')!.textContent = `コピーできない場合は ${ownUsername} を入力してください`;
+		}
+	});
+	document.querySelector<HTMLFormElement>('#friend-add-form')?.addEventListener('submit', (event) => {
+		event.preventDefault();
+		const input = document.querySelector<HTMLInputElement>('#friend-username');
+		const status = document.querySelector<HTMLElement>('#friend-add-status');
+		const username = input?.value.trim().replace(/^@/, '').toLowerCase() ?? '';
+		const friend = friendDirectory.find((candidate) => candidate.id.toLowerCase() === username);
+		if (!friend) {
+			if (status) status.textContent = 'そのユーザー名は見つかりませんでした';
+			return;
+		}
+		if (connections.some((connection) => connection.id === friend.id)) {
+			if (status) status.textContent = 'すでにつながっています';
+			return;
+		}
+		if (friendRequests.some((request) => request.from === ownUsername && request.friendId === friend.id && request.status === 'pending')) {
+			if (status) status.textContent = 'すでに申請中です';
+			return;
+		}
+		friendRequests = [...friendRequests, { id: `request-${Date.now()}`, from: ownUsername, to: `@${friend.id}`, friendId: friend.id, status: 'pending' }];
+		saveAppState();
+		if (status) status.textContent = `${friend.name}さんへ申請を送りました。承認されるとフレンドになります`;
+		if (input) input.value = '';
+	});
+	document.querySelectorAll<HTMLButtonElement>('[data-accept-request]').forEach((button) => button.addEventListener('click', () => {
+		const request = friendRequests.find((item) => item.id === button.dataset.acceptRequest && item.status === 'pending');
+		if (!request) return;
+		const friend = friendDirectory.find((candidate) => candidate.id === request.from.replace(/^@/, ''));
+		if (!friend) return;
+		friendRequests = friendRequests.map((item) => item.id === request.id ? { ...item, status: 'accepted' } : item);
+		if (!connections.some((connection) => connection.id === friend.id)) connections = [...connections, { ...friend }];
+		saveAppState();
+		showProfile(profileReturnAction);
+	}));
 }
 
 function showFavorites(): void {
@@ -665,10 +754,32 @@ function showFavorites(): void {
 	}));
 }
 
+function showFriendRequests(): void {
+	const requests = friendRequests.filter((request) => request.to === ownUsername && request.status === 'pending');
+	root.innerHTML = `<main class="profile-posts-screen">
+		<header class="profile-header"><button class="profile-back" id="friend-requests-back" aria-label="マイページに戻る">‹</button><h1>フレンド申請</h1></header>
+		<section class="friend-request-list-page">${requests.length ? requests.map((request) => {
+			const friend = friendDirectory.find((candidate) => candidate.id === request.friendId);
+			return `<div class="incoming-request request-card"><div><strong>${escapeHtml(friend?.name ?? request.from)}</strong><small>${escapeHtml(request.from)}</small></div><button type="button" data-accept-request-page="${request.id}">承認する</button></div>`;
+		}).join('') : '<p class="empty-connections">届いているフレンド申請はありません</p>'}</section>
+	</main>`;
+	document.querySelector<HTMLButtonElement>('#friend-requests-back')?.addEventListener('click', () => showProfile());
+	document.querySelectorAll<HTMLButtonElement>('[data-accept-request-page]').forEach((button) => button.addEventListener('click', () => {
+		const request = friendRequests.find((item) => item.id === button.dataset.acceptRequestPage && item.status === 'pending');
+		if (!request) return;
+		const friend = friendDirectory.find((candidate) => candidate.id === request.friendId);
+		if (!friend) return;
+		friendRequests = friendRequests.map((item) => item.id === request.id ? { ...item, status: 'accepted' } : item);
+		if (!connections.some((connection) => connection.id === friend.id)) connections = [...connections, { ...friend }];
+		saveAppState();
+		showFriendRequests();
+	}));
+}
+
 function showConnections(): void {
 	root.innerHTML = `<main class="profile-posts-screen">
 		<header class="profile-header"><button class="profile-back" id="connections-back" aria-label="マイページに戻る">‹</button><h1>つながり</h1></header>
-		<section class="connections-list">${connections.length ? connections.map((connection) => `<div class="connection-row">${friendAvatarMarkup(connection.name, connection.photo)}<div class="connection-copy"><strong>${escapeHtml(connection.name)}</strong><small>${escapeHtml(connection.message)}</small></div><button class="connection-remove" data-connection-id="${connection.id}">削除</button></div>`).join('') : '<p class="empty-connections">つながりはありません</p>'}</section>
+		<section class="connections-list">${connections.length ? connections.map((connection) => `<div class="connection-row">${friendAvatarMarkup(connection.name, connection.photo)}<div class="connection-copy"><strong>${escapeHtml(connection.name)}</strong><small>${escapeHtml(connection.message)} · @${escapeHtml(connection.id)}</small></div><button class="connection-remove" data-connection-id="${connection.id}">削除</button></div>`).join('') : '<p class="empty-connections">つながりはありません</p>'}</section>
 	</main>`;
 	document.querySelector<HTMLButtonElement>('#connections-back')?.addEventListener('click', () => showProfile());
 	document.querySelectorAll<HTMLButtonElement>('.connection-remove').forEach((button) => button.addEventListener('click', () => {
@@ -784,11 +895,22 @@ function showCamera(): void {
 	document.querySelector<HTMLButtonElement>('#rotate-photo')?.addEventListener('click', () => { rotation = (rotation + 90) % 360; updatePreview(); });
 	publish.addEventListener('click', () => {
 		const text = document.querySelector<HTMLTextAreaElement>('#post-comment')?.value.trim() || '今日のごはんを投稿しました！';
-		posts.unshift({ id: `post-${Date.now()}`, name: 'たかし', time: '今', image: selectedImage, text, reactions: 'リアクションを送る' });
+		const postedAt = new Date().toISOString();
+		const post = { id: `post-${Date.now()}`, name: profileName, time: 'たった今', image: selectedImage, text, reactions: 'リアクションを送る', postedAt };
+		posts.unshift(post);
+		personalPosts.unshift({ ...post, reactions: 'まだリアクションはありません' });
+		saveAppState();
 		render();
 	});
 	document.querySelector('#camera-back')?.addEventListener('click', render);
 	document.querySelector<HTMLButtonElement>('#camera-profile-button')?.addEventListener('click', () => showProfile(showCamera));
+	document.querySelectorAll<HTMLButtonElement>('.post-screen .nav-item').forEach((item) => item.addEventListener('click', () => {
+		const screen = item.dataset.screen;
+		if (screen === 'home') render();
+		if (screen === 'groups') renderGroups();
+		if (screen === 'advice') showAdvice();
+		if (screen === 'calendar') renderCalendar();
+	}));
 	document.querySelector<HTMLInputElement>('.photo-picker input')?.addEventListener('change', (event) => {
 		const file = (event.currentTarget as HTMLInputElement).files?.[0];
 		if (!file) return;
@@ -803,4 +925,5 @@ function showCamera(): void {
 }
 
 loadAppState();
+applyFontSize();
 render();
