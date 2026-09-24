@@ -22,16 +22,12 @@ const reactions: Reaction[] = [
 	{ name: 'みさき', stamp: 'good', text: 'いいね！', tone: 'pink' },
 ];
 
-const posts: Post[] = [
-	{ id: 'sakura-post', name: 'さくら', time: '10分前', image: '🥗', text: '今日のお昼は野菜たっぷり！', reactions: 'さくら、ゆうき 他3人' },
-	{ id: 'yuki-post', name: 'ゆうき', time: '1時間前', image: '🍝', text: 'お気に入りのお店でランチしてきたよ', reactions: 'けん 他2人' },
-	{ id: 'ken-post', name: 'けん', time: '昨日', image: '🍱', text: 'みんなで食べるごはんは最高！', reactions: 'みさき 他4人' },
-];
+const posts: Post[] = [];
 
 const myPosts: Post[] = [
-	{ id: 'my-post-1', name: 'あなた', time: '昨日', image: '🍳', text: '朝ごはんをゆっくり食べました', reactions: 'さくら 他2人' },
-	{ id: 'my-post-2', name: 'あなた', time: '3日前', image: '🍛', text: 'お気に入りのカレーを食べに行ったよ', reactions: 'ゆうき 他4人' },
-	{ id: 'my-post-3', name: 'あなた', time: '1週間前', image: '🍰', text: '食後のデザートまで楽しみました', reactions: 'けん 他1人' },
+	{ id: 'my-post-1', name: 'あなた', time: '昨日', image: '🍳', text: '朝ごはんをゆっくり食べました', reactions: 'まだリアクションはありません' },
+	{ id: 'my-post-2', name: 'あなた', time: '3日前', image: '🍛', text: 'お気に入りのカレーを食べに行ったよ', reactions: 'まだリアクションはありません' },
+	{ id: 'my-post-3', name: 'あなた', time: '1週間前', image: '🍰', text: '食後のデザートまで楽しみました', reactions: 'まだリアクションはありません' },
 ];
 
 let personalPosts: Post[] = [...myPosts];
@@ -103,9 +99,20 @@ function getSharedFriendRequests(): FriendRequest[] {
 	return readStoredJson<FriendRequest[]>(sharedFriendRequestsKey) ?? [];
 }
 
+function refreshSharedState(): void {
+	friendRequests = getSharedFriendRequests();
+	groupInvites = getSharedGroupInvites();
+	syncAcceptedFriendships();
+	if (document.querySelector('#friend-add-form')) showProfile(profileReturnAction);
+	if (document.querySelector('#friend-requests-back')) showFriendRequests();
+	if (document.querySelector('#my-group-invites')) showProfile(profileReturnAction);
+	if (document.querySelector('#group-invites-back')) showGroupInvites();
+}
+
 function saveSharedFriendRequests(requests: FriendRequest[]): void {
 	friendRequests = requests;
 	writeStoredJson(sharedFriendRequestsKey, requests);
+	refreshSharedState();
 }
 
 function getSharedGroupInvites(): GroupInvite[] {
@@ -1320,6 +1327,7 @@ function showLogin(): void {
 		writeTabJson('hakason-authenticated', true);
 		saveAppState();
 		publishOwnProfile();
+		refreshSharedState();
 		render();
 	});
 }
@@ -1331,11 +1339,8 @@ groupInvites = getSharedGroupInvites();
 syncAcceptedFriendships();
 publishOwnProfile();
 window.addEventListener('storage', (event) => {
-	if (event.key === sharedProfilesKey || event.key === sharedFriendRequestsKey) syncSharedFriends();
-	if (event.key === sharedGroupInvitesKey) {
-		groupInvites = getSharedGroupInvites();
-		if (document.querySelector('#my-group-invites')) showProfile(profileReturnAction);
-		if (document.querySelector('#group-invites-back')) showGroupInvites();
+	if (event.key === sharedProfilesKey || event.key === sharedFriendRequestsKey || event.key === sharedGroupInvitesKey) {
+		refreshSharedState();
 	}
 });
 window.setInterval(() => { void syncFriendRequestsFromServer(); }, 1500);
