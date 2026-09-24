@@ -432,7 +432,13 @@ function renderGroups(): void {
 
 function renderGroupCard(group: Group): string {
 	return `<button class="group-card" data-group-id="${group.id}">
-		<div class="group-cover">${group.image}<strong>${group.name}</strong><small class="group-visibility">${group.visibility === 'private' ? '🔒 非公開' : '公開'}</small></div>
+		<div class="group-cover">
+			<span class="group-cover-icon" aria-hidden="true">${group.image}</span>
+			<div class="group-cover-text">
+				<strong>${group.name}</strong>
+				<small class="group-visibility">${group.visibility === 'private' ? '🔒 非公開' : '公開'}</small>
+			</div>
+		</div>
 		<div class="group-members">${group.members.map((member) => `<span title="${member}">${member.charAt(0)}</span>`).join('')}</div>
 	</button>`;
 	return `<article class="group-card" data-group-id="${group.id}" role="button" tabindex="0">
