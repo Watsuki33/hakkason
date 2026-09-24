@@ -105,8 +105,8 @@ function renderGroupDetail(group: Group): void {
 
 function renderTimelinePost(post: Post, mine: boolean): string {
 	return `<article class="timeline-post ${mine ? 'mine-post' : ''}" data-post-id="${post.id}">
-		<div class="post-top"><span class="post-avatar">${post.name.charAt(0)}</span><span><strong>${post.name}</strong><small>${post.time}</small></span><button class="message-button" data-message-name="${post.name}" aria-label="${post.name}さんにメッセージ">✉</button></div>
-		<div class="post-image">${post.image}</div><p class="post-text">${post.text}</p>
+		<div class="post-top"><span class="post-avatar">${post.name.charAt(0)}</span><span><strong>${post.name}</strong><small>${post.time}</small></span><button class="message-button" data-message-name="${post.name}" aria-label="${post.name}さんにメッセージ">✉</button>${mine ? `<span class="post-more" data-delete-post="${post.id}" role="button" tabindex="0" aria-label="投稿を削除">•••</span>` : ''}</div>
+		<div class="post-image">${imageMarkup(post.image)}</div><p class="post-text">${post.text}</p>
 		<div class="stamp-area">
 			<div class="stamp-heading"><strong>この写真にリアクションを送る</strong><small>${post.name}さんの投稿</small></div>
 			<div class="stamp-list" aria-label="${post.name}さんへのリアクション">
@@ -121,9 +121,13 @@ function renderTimelinePost(post: Post, mine: boolean): string {
 
 function renderPost(post: Post): string {
 	return `<button class="post-card" data-post-id="${post.id}">
-		<div class="post-top"><span class="post-avatar">${post.name.charAt(0)}</span><span><strong>${post.name}</strong><small>${post.time}</small></span><span class="post-more">•••</span></div>
-		<div class="post-image">${post.image}</div><p class="post-text">${post.text}</p><div class="post-reactions">♡ ${post.reactions}</div>
+		<div class="post-top"><span class="post-avatar">${post.name.charAt(0)}</span><span><strong>${post.name}</strong><small>${post.time}</small></span><span class="post-more" ${post.name === 'たかし' ? `data-delete-post="${post.id}"` : ''} role="button" tabindex="0" aria-label="投稿メニュー">•••</span></div>
+		<div class="post-image">${imageMarkup(post.image)}</div><p class="post-text">${post.text}</p><div class="post-reactions">♡ ${post.reactions}</div>
 	</button>`;
+}
+
+function imageMarkup(image: string): string {
+	return image.startsWith('data:image/') ? `<img src="${image}" alt="投稿した写真">` : image;
 }
 
 function bindEvents(): void {
@@ -139,6 +143,8 @@ function bindEvents(): void {
 	}));
 	document.querySelector<HTMLButtonElement>('#group-back')?.addEventListener('click', renderGroups);
 	document.querySelector<HTMLButtonElement>('#add-group')?.addEventListener('click', addGroup);
+	document.querySelector<HTMLButtonElement>('#cancel-group')?.addEventListener('click', () => document.querySelector('.group-dialog-backdrop')?.remove());
+	document.querySelector<HTMLButtonElement>('#create-group')?.addEventListener('click', createGroup);
 	document.querySelectorAll<HTMLButtonElement>('.stamp-button').forEach((button) => button.addEventListener('click', () => {
 		const post = button.closest('.timeline-post');
 		post?.querySelectorAll('.stamp-button').forEach((stamp) => stamp.classList.remove('selected'));
@@ -157,12 +163,104 @@ function bindEvents(): void {
 		if (preview) preview.innerHTML = `<span>送信済み</span><img src="/reaction-${stampClass.replace('stamp-', '')}.png" alt="送信したリアクション">`;
 	}));
 	document.querySelectorAll<HTMLButtonElement>('.message-button').forEach((button) => button.addEventListener('click', () => showMessages(button.dataset.messageName ?? '友達')));
+	document.querySelectorAll<HTMLElement>('[data-delete-post]').forEach((menu) => {
+		const removePost = (): void => {
+			const postId = menu.dataset.deletePost;
+			if (!postId) return;
+			showDeleteDialog(() => {
+				const index = posts.findIndex((post) => post.id === postId);
+				if (index >= 0) posts.splice(index, 1);
+				groups.forEach((group) => {
+					const groupIndex = group.posts.findIndex((post) => post.id === postId);
+					if (groupIndex >= 0) group.posts.splice(groupIndex, 1);
+				});
+				const timelinePost = menu.closest('.timeline-post');
+				if (timelinePost) {
+					const group = groups.find((item) => item.posts.some((post) => post.id === postId) || postId.startsWith(`${item.id}-`));
+					if (group) renderGroupDetail(group);
+					else render();
+				} else render();
+			});
+		};
+		menu.addEventListener('click', (event) => { event.stopPropagation(); removePost(); });
+		menu.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); removePost(); } });
+	});
+	document.querySelectorAll<HTMLElement>('.post-more:not([data-delete-post])').forEach((menu) => {
+		menu.addEventListener('click', (event) => {
+			event.stopPropagation();
+			showInfoDialog('この投稿は削除できません', '自分の投稿だけ削除できます。');
+		});
+		menu.addEventListener('keydown', (event) => {
+			if (event.key === 'Enter' || event.key === ' ') {
+				event.preventDefault();
+				showInfoDialog('この投稿は削除できません', '自分の投稿だけ削除できます。');
+			}
+		});
+	});
+}
+
+function showDeleteDialog(onConfirm: () => void): void {
+	const dialog = document.createElement('div');
+	dialog.className = 'delete-dialog-backdrop';
+	dialog.innerHTML = `<section class="delete-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-dialog-title">
+		<div class="delete-dialog-icon">!</div>
+		<h2 id="delete-dialog-title">自分の投稿を削除しますか？</h2>
+		<p>削除した投稿はタイムラインから見えなくなります。</p>
+		<div class="delete-dialog-actions"><button class="delete-cancel">キャンセル</button><button class="delete-confirm">削除する</button></div>
+	</section>`;
+	document.body.appendChild(dialog);
+	dialog.querySelector<HTMLButtonElement>('.delete-cancel')?.addEventListener('click', () => dialog.remove());
+	dialog.querySelector<HTMLButtonElement>('.delete-confirm')?.addEventListener('click', () => {
+		dialog.remove();
+		onConfirm();
+	});
+}
+
+function showInfoDialog(title: string, message: string): void {
+	const dialog = document.createElement('div');
+	dialog.className = 'delete-dialog-backdrop';
+	dialog.innerHTML = `<section class="delete-dialog info-dialog" role="dialog" aria-modal="true" aria-labelledby="info-dialog-title">
+		<div class="delete-dialog-icon">i</div>
+		<h2 id="info-dialog-title">${title}</h2>
+		<p>${message}</p>
+		<div class="delete-dialog-actions"><button class="delete-confirm info-close">わかりました</button></div>
+	</section>`;
+	document.body.appendChild(dialog);
+	dialog.querySelector<HTMLButtonElement>('.info-close')?.addEventListener('click', () => dialog.remove());
 }
 
 function addGroup(): void {
-	const name = window.prompt('追加するグループ名を入力してください');
-	if (!name?.trim()) return;
-	groups.push({ id: `group-${Date.now()}`, name: name.trim(), image: '👨‍👩‍👧', members: ['たかし'], posts: [] });
+	const friends = [...new Set([...reactions.map((reaction) => reaction.name), 'けん', 'みさき'])];
+	const dialog = document.createElement('div');
+	dialog.className = 'group-dialog-backdrop';
+	dialog.innerHTML = `<section class="group-dialog" role="dialog" aria-modal="true" aria-labelledby="group-dialog-title">
+		<div class="group-dialog-header"><div><p class="dialog-kicker">NEW GROUP</p><h2 id="group-dialog-title">グループを作成</h2></div><button class="dialog-close" id="cancel-group" aria-label="閉じる">×</button></div>
+		<label class="group-field-label" for="group-name">グループ名</label>
+		<input class="group-name-input" id="group-name" type="text" maxlength="30" placeholder="例：週末ごはん会">
+		<div class="group-friends-heading"><strong>フレンドを招待</strong><small>あとから追加することもできます</small></div>
+		<div class="group-friend-list">${friends.map((friend) => `<label class="group-friend-option"><input type="checkbox" name="group-friend" value="${friend}"><span class="friend-avatar">${friend.charAt(0)}</span><strong>${friend}</strong><span class="friend-check">✓</span></label>`).join('')}</div>
+		<button class="group-create-button" id="create-group">グループを作成する</button>
+	</section>`;
+	document.body.appendChild(dialog);
+	dialog.querySelector<HTMLInputElement>('#group-name')?.focus();
+	dialog.querySelector<HTMLButtonElement>('#cancel-group')?.addEventListener('click', () => dialog.remove());
+	dialog.querySelector<HTMLButtonElement>('#create-group')?.addEventListener('click', createGroup);
+	dialog.addEventListener('click', (event) => {
+		if (event.target === dialog) dialog.remove();
+	});
+}
+
+function createGroup(): void {
+	const nameInput = document.querySelector<HTMLInputElement>('#group-name');
+	const name = nameInput?.value.trim() ?? '';
+	if (!name) {
+		nameInput?.focus();
+		nameInput?.classList.add('input-error');
+		return;
+	}
+	const members = Array.from(document.querySelectorAll<HTMLInputElement>('input[name="group-friend"]:checked')).map((input) => input.value);
+	groups.push({ id: `group-${Date.now()}`, name, image: '👨‍👩‍👧', members: ['たかし', ...members], posts: [] });
+	document.querySelector('.group-dialog-backdrop')?.remove();
 	renderGroups();
 }
 
@@ -198,7 +296,59 @@ function escapeHtml(value: string): string {
 }
 
 function showCamera(): void {
-	root.innerHTML = `<main class="camera-screen"><button class="camera-back" id="camera-back">‹ ホーム</button><div class="camera-copy"><span class="camera-icon">▣</span><h1>写真を投稿</h1><p>今日のごはんをみんなにシェアしよう</p><label class="photo-picker">写真を選ぶ<input type="file" accept="image/*" capture="environment"></label></div></main>`;
+	root.innerHTML = `<main class="post-screen">
+		<header class="home-header"><button class="header-back" id="camera-back" aria-label="ホームに戻る">‹</button><h1>投稿</h1><button class="profile-button" aria-label="プロフィール">◉</button></header>
+		<div class="post-form">
+			<div class="photo-preview-area empty" id="photo-preview"><span>写真を選択してください</span></div>
+			<label class="photo-select-card" id="photo-select-card"><span class="photo-select-icon">＋</span><span class="photo-select-title">写真を選ぶ</span><small>タップしてカメラ撮影またはアルバムから選択</small><input id="photo-input" type="file" accept="image/*" capture="environment"></label>
+			<div class="edit-tools" id="edit-tools" hidden><strong>写真を編集</strong><button type="button" data-filter="none">通常</button><button type="button" data-filter="bright">明るく</button><button type="button" data-filter="soft">やわらかく</button><button type="button" data-filter="gray">モノクロ</button><button type="button" id="rotate-photo">↻ 回転</button></div>
+			<label class="comment-label" for="post-comment">コメント</label><textarea id="post-comment" placeholder="コメントを入力..."></textarea>
+			<button class="publish-button" id="publish-button" disabled>投稿する</button>
+		</div>
+		${renderNav('home')}
+	</main>`;
+	let selectedImage = '';
+	let filter = 'none';
+	let rotation = 0;
+	const preview = document.querySelector<HTMLDivElement>('#photo-preview')!;
+	const input = document.querySelector<HTMLInputElement>('#photo-input')!;
+	const tools = document.querySelector<HTMLDivElement>('#edit-tools')!;
+	const publish = document.querySelector<HTMLButtonElement>('#publish-button')!;
+	const updatePreview = (): void => {
+		preview.className = `photo-preview-area ${filter}`;
+		const image = preview.querySelector<HTMLImageElement>('img');
+		if (image) image.style.transform = `rotate(${rotation}deg)`;
+	};
+	input.addEventListener('change', () => {
+		const file = input.files?.[0];
+		if (!file) return;
+		const reader = new FileReader();
+		reader.addEventListener('load', () => {
+			selectedImage = String(reader.result);
+			preview.innerHTML = `<img src="${selectedImage}" alt="投稿写真">`;
+			preview.classList.remove('empty');
+			const selectCard = document.querySelector<HTMLElement>('#photo-select-card');
+			if (selectCard) {
+				selectCard.classList.add('has-photo');
+				selectCard.querySelector<HTMLElement>('.photo-select-title')!.textContent = '写真を変更';
+				selectCard.querySelector('small')!.textContent = '別の写真を選び直す';
+			}
+			tools.hidden = false;
+			publish.disabled = false;
+			updatePreview();
+		});
+		reader.readAsDataURL(file);
+	});
+	tools.querySelectorAll<HTMLButtonElement>('[data-filter]').forEach((button) => button.addEventListener('click', () => {
+		filter = button.dataset.filter ?? 'none';
+		updatePreview();
+	}));
+	document.querySelector<HTMLButtonElement>('#rotate-photo')?.addEventListener('click', () => { rotation = (rotation + 90) % 360; updatePreview(); });
+	publish.addEventListener('click', () => {
+		const text = document.querySelector<HTMLTextAreaElement>('#post-comment')?.value.trim() || '今日のごはんを投稿しました！';
+		posts.unshift({ id: `post-${Date.now()}`, name: 'たかし', time: '今', image: selectedImage, text, reactions: 'リアクションを送る' });
+		render();
+	});
 	document.querySelector('#camera-back')?.addEventListener('click', render);
 }
 
