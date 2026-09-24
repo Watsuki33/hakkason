@@ -24,11 +24,7 @@ const reactions: Reaction[] = [
 
 const posts: Post[] = [];
 
-const myPosts: Post[] = [
-	{ id: 'my-post-1', name: 'あなた', time: '昨日', image: '🍳', text: '朝ごはんをゆっくり食べました', reactions: 'まだリアクションはありません' },
-	{ id: 'my-post-2', name: 'あなた', time: '3日前', image: '🍛', text: 'お気に入りのカレーを食べに行ったよ', reactions: 'まだリアクションはありません' },
-	{ id: 'my-post-3', name: 'あなた', time: '1週間前', image: '🍰', text: '食後のデザートまで楽しみました', reactions: 'まだリアクションはありません' },
-];
+const myPosts: Post[] = [];
 
 let personalPosts: Post[] = [...myPosts];
 
@@ -889,7 +885,13 @@ function showProfile(returnAction: (() => void) | null = render): void {
 		<section class="profile-content">
 			${profileAvatarMarkup('profile-large-avatar')}
 			<h2>${!profilePublic ? '<span class="private-lock" aria-label="非公開">🔒</span>' : ''}${escapeHtml(profileName)}</h2><p class="profile-handle">${escapeHtml(ownUsername)}</p>${profileMessage ? `<p class="profile-message">${escapeHtml(profileMessage)}</p>` : ''}<p class="profile-visibility">${profilePublic ? '公開プロフィール' : '非公開プロフィール'}</p>
-			<div class="profile-stats"><button class="profile-stat-button" id="my-posts"><strong>12</strong><small>投稿</small></button><button class="profile-stat-button" id="my-connections"><strong>${uniqueConnections(connections).length}</strong><small>フレンド</small></button><button class="profile-stat-button" id="my-favorites"><strong>${favorites.length}</strong><small>お気に入り</small></button><button class="profile-stat-button" id="my-friend-requests"><strong>${pendingIncoming.length}</strong><small>フレンド申請</small></button><button class="profile-stat-button" id="my-group-invites"><strong>${pendingGroupInvites.length}</strong><small>招待されたグループ</small></button></div>
+			<div class="profile-stats profile-stats-two-row">
+				<button class="profile-stat-button" id="my-posts"><strong>12</strong><small>投稿</small></button>
+				<button class="profile-stat-button" id="my-connections"><strong>${uniqueConnections(connections).length}</strong><small>フレンド</small></button>
+				<button class="profile-stat-button" id="my-favorites"><strong>${favorites.length}</strong><small>お気に入り</small></button>
+				<button class="profile-stat-button" id="my-friend-requests"><strong>${pendingIncoming.length}</strong><small>フレンド申請</small></button>
+				<button class="profile-stat-button" id="my-group-invites"><strong>${pendingGroupInvites.length}</strong><small>招待されたグループ</small></button>
+			</div>
 			<button class="profile-action" id="edit-profile">プロフィールを編集</button>
 			<section class="friend-add-section" aria-labelledby="friend-add-title">
 				<h2 id="friend-add-title">フレンド申請</h2>
