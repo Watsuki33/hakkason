@@ -1,6 +1,6 @@
 import './styles.css';
 
-type Reaction = { name: string; emoji: string; text: string; tone: string };
+type Reaction = { name: string; stamp: string; text: string; tone: string };
 type Post = { id: string; name: string; time: string; image: string; text: string; reactions: string };
 type Connection = { id: string; name: string; photo: string; message: string };
 type SavedState = { profileName: string; profileImage: string; notificationsEnabled: boolean; profileMessage: string; profilePublic: boolean; connections: Connection[]; favorites: Post[]; personalPosts: Post[] };
@@ -8,10 +8,10 @@ type Group = { id: string; name: string; image: string; members: string[]; posts
 type SentReaction = { recipient: string; emoji: string; stamp: string; postText: string };
 
 const reactions: Reaction[] = [
-	{ name: 'さくら', emoji: '🥰', text: 'おいしそう！', tone: 'peach' },
-	{ name: 'ゆうき', emoji: '😋', text: 'いいね！', tone: 'yellow' },
-	{ name: 'けん', emoji: '👏', text: '食べたい！', tone: 'blue' },
-	{ name: 'みさき', emoji: '❤️', text: 'いいね！', tone: 'pink' },
+	{ name: 'さくら', stamp: 'happy', text: 'おいしそう！', tone: 'peach' },
+	{ name: 'ゆうき', stamp: 'love', text: 'いいね！', tone: 'yellow' },
+	{ name: 'けん', stamp: 'hungry', text: '食べたい！', tone: 'blue' },
+	{ name: 'みさき', stamp: 'good', text: 'いいね！', tone: 'pink' },
 ];
 
 const posts: Post[] = [
@@ -54,6 +54,7 @@ let profileImage = '';
 let notificationsEnabled = true;
 let profileMessage = '';
 let profilePublic = true;
+let profileReturnAction: (() => void) | null = render;
 
 function saveAppState(): void {
 	const state: SavedState = { profileName, profileImage, notificationsEnabled, profileMessage, profilePublic, connections, favorites, personalPosts };
@@ -227,7 +228,7 @@ function render(): void {
 							<path class="stomach-line" d="M174 23c15 15 43 16 57 1" />
 						</svg>
 						<div class="reaction-bubbles">
-							${reactions.map((reaction, index) => `<button class="reaction-bubble ${reaction.tone} bubble-${index}" data-reaction="${reaction.name}"><span>${reaction.emoji}</span><small>${reaction.name}</small><strong>${reaction.text}</strong></button>`).join('')}
+							${reactions.map((reaction, index) => `<button class="reaction-bubble ${reaction.tone} bubble-${index}" data-reaction="${reaction.name}"><span class="reaction-stamp reaction-${reaction.stamp}" aria-hidden="true"></span><small>${reaction.name}</small><strong>${reaction.text}</strong></button>`).join('')}
 						</div>
 					</div>
 					<p class="reaction-hint">みんなの気持ちが胃の中にたまっているよ</p>
@@ -374,10 +375,10 @@ function bindEvents(): void {
 	document.querySelectorAll<HTMLButtonElement>('.post-card').forEach((card) => card.addEventListener('click', () => card.scrollIntoView({ behavior: 'smooth', block: 'center' })));
 	document.querySelector<HTMLButtonElement>('#show-all')?.addEventListener('click', () => document.querySelector('#timeline')?.scrollIntoView({ behavior: 'smooth' }));
 	document.querySelector<HTMLButtonElement>('#camera-button')?.addEventListener('click', showCamera);
-	document.querySelector<HTMLButtonElement>('#profile-button')?.addEventListener('click', showProfile);
-	document.querySelector<HTMLButtonElement>('#group-profile-button')?.addEventListener('click', showProfile);
-	document.querySelector<HTMLButtonElement>('#group-detail-profile-button')?.addEventListener('click', showProfile);
-	document.querySelector<HTMLButtonElement>('.profile-button-calendar')?.addEventListener('click', showProfile);
+	document.querySelector<HTMLButtonElement>('#profile-button')?.addEventListener('click', () => showProfile(render));
+	document.querySelector<HTMLButtonElement>('#group-profile-button')?.addEventListener('click', () => showProfile(renderGroups));
+	document.querySelector<HTMLButtonElement>('#group-detail-profile-button')?.addEventListener('click', () => showProfile(renderGroups));
+	document.querySelector<HTMLButtonElement>('.profile-button-calendar')?.addEventListener('click', () => showProfile(renderCalendar));
 	document.querySelectorAll<HTMLButtonElement>('.nav-item').forEach((item) => item.addEventListener('click', () => {
 		const screen = item.dataset.screen;
 		if (screen === 'home') render();
@@ -556,6 +557,7 @@ function showMessages(name: string): void {
 		${renderNav('groups')}
 	</main>`;
 	document.querySelector('#message-back')?.addEventListener('click', renderGroups);
+	document.querySelector<HTMLButtonElement>('.message-header .profile-button')?.addEventListener('click', () => showProfile(() => showMessages(name)));
 	document.querySelector<HTMLFormElement>('#message-composer')?.addEventListener('submit', (event) => {
 		event.preventDefault();
 		const input = document.querySelector<HTMLInputElement>('#message-input');
@@ -577,7 +579,7 @@ function showAdvice(): void {
 		</div>
 		${renderNav('advice')}
 	</main>`;
-	document.querySelector<HTMLButtonElement>('#advice-profile-button')?.addEventListener('click', showProfile);
+	document.querySelector<HTMLButtonElement>('#advice-profile-button')?.addEventListener('click', () => showProfile(showAdvice));
 	bindEvents();
 	void loadAdvice();
 }
@@ -608,9 +610,10 @@ async function loadAdvice(): Promise<void> {
 	}
 }
 
-function showProfile(): void {
+function showProfile(returnAction: (() => void) | null = render): void {
+	profileReturnAction = returnAction ?? render;
 	root.innerHTML = `<main class="home-shell profile-screen">
-		<header class="home-header"><h1>マイページ</h1><button class="profile-button" aria-label="マイページ"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5" /><path d="M5 20c.7-3.4 3.1-5.2 7-5.2s6.3 1.8 7 5.2" /></svg></button></header>
+		<header class="home-header"><button class="profile-back" id="profile-back" aria-label="前の画面に戻る">‹</button><h1>マイページ</h1><button class="profile-button" aria-label="マイページ"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5" /><path d="M5 20c.7-3.4 3.1-5.2 7-5.2s6.3 1.8 7 5.2" /></svg></button></header>
 		<div class="home-scroll">
 		<section class="profile-content">
 			${profileAvatarMarkup('profile-large-avatar')}
@@ -621,13 +624,22 @@ function showProfile(): void {
 		</div>
 		<nav class="bottom-nav" aria-label="メインメニュー">
 			<button class="nav-item active" id="profile-home-button"><span>⌂</span><small>ホーム</small></button>
-			<button class="nav-item"><span>♟</span><small>グループ</small></button>
+			<button class="nav-item" id="profile-groups-button"><span>♟</span><small>グループ</small></button>
 			<button class="nav-item" id="profile-advice-button"><span>✿</span><small>アドバイス</small></button>
-			<button class="nav-item"><span>□</span><small>カレンダー</small></button>
+			<button class="nav-item" id="profile-calendar-button"><span>□</span><small>カレンダー</small></button>
 		</nav>
 	</main>`;
+	document.querySelector<HTMLButtonElement>('#profile-back')?.addEventListener('click', () => {
+		if (profileReturnAction) {
+			profileReturnAction();
+			return;
+		}
+		render();
+	});
 	document.querySelector<HTMLButtonElement>('#profile-home-button')?.addEventListener('click', render);
+	document.querySelector<HTMLButtonElement>('#profile-groups-button')?.addEventListener('click', renderGroups);
 	document.querySelector<HTMLButtonElement>('#profile-advice-button')?.addEventListener('click', showAdvice);
+	document.querySelector<HTMLButtonElement>('#profile-calendar-button')?.addEventListener('click', renderCalendar);
 	document.querySelector<HTMLButtonElement>('#my-posts')?.addEventListener('click', showMyPosts);
 	document.querySelector<HTMLButtonElement>('#my-connections')?.addEventListener('click', showConnections);
 	document.querySelector<HTMLButtonElement>('#my-favorites')?.addEventListener('click', showFavorites);
@@ -643,7 +655,7 @@ function showFavorites(): void {
 			return `<div class="favorite-row">${friendAvatarMarkup(post.name, profile?.photo ?? '🍽️')}<div class="favorite-copy"><strong>${escapeHtml(post.name)}</strong><small>${escapeHtml(message)}</small></div><button class="favorite-remove" data-favorite-id="${post.id}">削除</button></div>`;
 		}).join('') : '<p class="empty-connections">お気に入りはありません</p>'}</section>
 	</main>`;
-	document.querySelector<HTMLButtonElement>('#favorites-back')?.addEventListener('click', showProfile);
+	document.querySelector<HTMLButtonElement>('#favorites-back')?.addEventListener('click', () => showProfile());
 	document.querySelectorAll<HTMLButtonElement>('.favorite-remove').forEach((button) => button.addEventListener('click', () => {
 		showDeleteConfirm('このお気に入りを削除しますか？', () => {
 			favorites = favorites.filter((post) => post.id !== button.dataset.favoriteId);
@@ -658,7 +670,7 @@ function showConnections(): void {
 		<header class="profile-header"><button class="profile-back" id="connections-back" aria-label="マイページに戻る">‹</button><h1>つながり</h1></header>
 		<section class="connections-list">${connections.length ? connections.map((connection) => `<div class="connection-row">${friendAvatarMarkup(connection.name, connection.photo)}<div class="connection-copy"><strong>${escapeHtml(connection.name)}</strong><small>${escapeHtml(connection.message)}</small></div><button class="connection-remove" data-connection-id="${connection.id}">削除</button></div>`).join('') : '<p class="empty-connections">つながりはありません</p>'}</section>
 	</main>`;
-	document.querySelector<HTMLButtonElement>('#connections-back')?.addEventListener('click', showProfile);
+	document.querySelector<HTMLButtonElement>('#connections-back')?.addEventListener('click', () => showProfile());
 	document.querySelectorAll<HTMLButtonElement>('.connection-remove').forEach((button) => button.addEventListener('click', () => {
 		showDeleteConfirm('このつながりを削除しますか？', () => {
 			connections = connections.filter((connection) => connection.id !== button.dataset.connectionId);
@@ -673,7 +685,7 @@ function showMyPosts(): void {
 		<header class="profile-header"><button class="profile-back" id="posts-back" aria-label="マイページに戻る">‹</button><h1>自分の投稿</h1></header>
 		<div class="profile-posts-list">${personalPosts.map((post) => renderPost({ ...post, name: profileName })).join('')}</div>
 	</main>`;
-	document.querySelector<HTMLButtonElement>('#posts-back')?.addEventListener('click', showProfile);
+	document.querySelector<HTMLButtonElement>('#posts-back')?.addEventListener('click', () => showProfile());
 	document.querySelectorAll<HTMLButtonElement>('.post-card').forEach((card) => card.addEventListener('click', () => card.scrollIntoView({ behavior: 'smooth', block: 'center' })));
 }
 
@@ -689,7 +701,7 @@ function showProfileEdit(): void {
 			<button class="profile-save" type="submit">保存する</button>
 		</form>
 	</main>`;
-	document.querySelector<HTMLButtonElement>('#edit-back')?.addEventListener('click', showProfile);
+	document.querySelector<HTMLButtonElement>('#edit-back')?.addEventListener('click', () => showProfile());
 	document.querySelector<HTMLInputElement>('#profile-photo')?.addEventListener('change', handleProfilePhoto);
 	document.querySelector<HTMLFormElement>('#profile-edit-form')?.addEventListener('submit', saveProfile);
 }
@@ -723,7 +735,7 @@ function saveProfile(event: SubmitEvent): void {
 
 function showCamera(): void {
 	root.innerHTML = `<main class="post-screen">
-		<header class="home-header"><button class="header-back" id="camera-back" aria-label="ホームに戻る">‹</button><h1>投稿</h1><button class="profile-button" aria-label="プロフィール">◉</button></header>
+		<header class="home-header"><button class="header-back" id="camera-back" aria-label="ホームに戻る">‹</button><h1>投稿</h1><button class="profile-button" id="camera-profile-button" aria-label="プロフィール">◉</button></header>
 		<div class="post-form">
 			<div class="photo-preview-area empty" id="photo-preview"><span>写真を選択してください</span></div>
 			<label class="photo-select-card" id="photo-select-card"><span class="photo-select-icon">＋</span><span class="photo-select-title">写真を選ぶ</span><small>タップしてカメラ撮影またはアルバムから選択</small><input id="photo-input" type="file" accept="image/*" capture="environment"></label>
@@ -776,6 +788,7 @@ function showCamera(): void {
 		render();
 	});
 	document.querySelector('#camera-back')?.addEventListener('click', render);
+	document.querySelector<HTMLButtonElement>('#camera-profile-button')?.addEventListener('click', () => showProfile(showCamera));
 	document.querySelector<HTMLInputElement>('.photo-picker input')?.addEventListener('change', (event) => {
 		const file = (event.currentTarget as HTMLInputElement).files?.[0];
 		if (!file) return;
