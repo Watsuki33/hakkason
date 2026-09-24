@@ -1,16 +1,12 @@
 import './styles.css';
-import { createCloudPost, deleteCloudPost, firebaseEnabled, sendCloudMessage, subscribeToMessages, subscribeToPosts } from './firebase';
-import { requestAdvice } from './client-api';
-import { readStoredJson, readTabJson, writeStoredJson, writeTabJson } from './storage';
 
 type Reaction = { name: string; stamp: string; text: string; tone: string };
 type FontSize = 'normal' | 'large' | 'x-large';
 type Post = { id: string; name: string; time: string; image: string; text: string; reactions: string; postedAt?: string };
 type Connection = { id: string; name: string; photo: string; message: string };
 type FriendRequest = { id: string; from: string; to: string; friendId: string; status: 'pending' | 'accepted' };
-type SharedProfile = { username: string; name: string; photo: string; message: string };
 type GroupInvite = { id: string; groupId: string; groupName: string; groupImage?: string; groupMembers?: string[]; groupVisibility?: GroupVisibility; inviteeId: string; from: string; status: 'pending' | 'accepted' | 'declined' };
-type SavedState = { profileName: string; username?: string; profileImage: string; notificationsEnabled: boolean; profileMessage: string; profilePublic: boolean; fontSize?: FontSize; connections: Connection[]; friendRequests?: FriendRequest[]; groupInvites?: GroupInvite[]; favorites: Post[]; personalPosts: Post[] };
+type SavedState = { profileName: string; profileImage: string; notificationsEnabled: boolean; profileMessage: string; profilePublic: boolean; fontSize?: FontSize; connections: Connection[]; friendRequests?: FriendRequest[]; favorites: Post[]; personalPosts: Post[] };
 type Group = { id: string; name: string; image: string; members: string[]; posts: Post[]; visibility?: GroupVisibility };
 type GroupVisibility = 'public' | 'private';
 type SentReaction = { recipient: string; emoji: string; stamp: string; postText: string };
@@ -22,13 +18,26 @@ const reactions: Reaction[] = [
 	{ name: 'みさき', stamp: 'good', text: 'いいね！', tone: 'pink' },
 ];
 
-const posts: Post[] = [];
+const posts: Post[] = [
+	{ id: 'sakura-post', name: 'さくら', time: '10分前', image: '🥗', text: '今日のお昼は野菜たっぷり！', reactions: 'さくら、ゆうき 他3人' },
+	{ id: 'yuki-post', name: 'ゆうき', time: '1時間前', image: '🍝', text: 'お気に入りのお店でランチしてきたよ', reactions: 'けん 他2人' },
+	{ id: 'ken-post', name: 'けん', time: '昨日', image: '🍱', text: 'みんなで食べるごはんは最高！', reactions: 'みさき 他4人' },
+];
 
-const myPosts: Post[] = [];
+const myPosts: Post[] = [
+	{ id: 'my-post-1', name: 'あなた', time: '昨日', image: '🍳', text: '朝ごはんをゆっくり食べました', reactions: 'さくら 他2人' },
+	{ id: 'my-post-2', name: 'あなた', time: '3日前', image: '🍛', text: 'お気に入りのカレーを食べに行ったよ', reactions: 'ゆうき 他4人' },
+	{ id: 'my-post-3', name: 'あなた', time: '1週間前', image: '🍰', text: '食後のデザートまで楽しみました', reactions: 'けん 他1人' },
+];
 
 let personalPosts: Post[] = [...myPosts];
 
-let connections: Connection[] = [];
+let connections: Connection[] = [
+	{ id: 'sakura', name: 'さくら', photo: '🌸', message: 'おいしいものが好き' },
+	{ id: 'yuki', name: 'ゆうき', photo: '☕', message: 'カフェ巡り中' },
+	{ id: 'ken', name: 'けん', photo: '🍙', message: 'みんなでごはん' },
+	{ id: 'misaki', name: 'みさき', photo: '🍓', message: '料理に挑戦中' },
+];
 
 let favorites: Post[] = [
 	{ id: 'favorite-1', name: 'さくら', time: '10分前', image: '🥗', text: '今日のお昼は野菜たっぷり！', reactions: 'さくら、ゆうき 他3人' },
@@ -50,7 +59,7 @@ const friendDirectory: Connection[] = [
 	{ id: 'mei', name: 'めい', photo: '🍎', message: '食べ歩きが好き' },
 ];
 
-let ownUsername = '@my_gohan';
+const ownUsername = '@my_gohan';
 
 const root = document.querySelector<HTMLDivElement>('#app')!;
 let profileName = 'あなた';
@@ -62,189 +71,28 @@ let fontSize: FontSize = 'normal';
 let friendRequests: FriendRequest[] = [];
 let groupInvites: GroupInvite[] = [];
 let profileReturnAction: (() => void) | null = render;
-let stopPostsListener: (() => void) | null = null;
-let stopMessagesListener: (() => void) | null = null;
-let isAuthenticated = false;
-const sharedProfilesKey = 'hakason-shared-profiles';
-const sharedFriendRequestsKey = 'hakason-shared-friend-requests';
-const sharedGroupInvitesKey = 'hakason-shared-group-invites';
-
-function getSharedProfiles(): SharedProfile[] {
-	return readStoredJson<SharedProfile[]>(sharedProfilesKey) ?? [];
-}
-
-function publishOwnProfile(): void {
-	const profiles = getSharedProfiles().filter((profile) => profile.username !== ownUsername);
-	writeStoredJson(sharedProfilesKey, [...profiles, { username: ownUsername, name: profileName, photo: profileImage, message: profileMessage }]);
-}
-
-function getAvailableFriends(): Connection[] {
-	const sharedFriends = getSharedProfiles().map((profile) => ({ id: profile.username.replace(/^@/, ''), name: profile.name, photo: profile.photo || '🍽️', message: profile.message }));
-	return [...friendDirectory, ...sharedFriends].filter((friend, index, list) => list.findIndex((candidate) => candidate.id.toLowerCase() === friend.id.toLowerCase()) === index);
-}
-
-function getFriendById(id: string): Connection {
-	return getAvailableFriends().find((friend) => friend.id.toLowerCase() === id.toLowerCase()) ?? { id, name: `@${id}`, photo: '🍽️', message: '' };
-}
-
-function uniqueConnections(items: Connection[]): Connection[] {
-	return items.filter((connection, index, list) => list.findIndex((candidate) => candidate.id.toLowerCase() === connection.id.toLowerCase()) === index);
-}
-
-function getSharedFriendRequests(): FriendRequest[] {
-	return readStoredJson<FriendRequest[]>(sharedFriendRequestsKey) ?? [];
-}
-
-function refreshSharedState(): void {
-	friendRequests = getSharedFriendRequests();
-	groupInvites = getSharedGroupInvites();
-	syncAcceptedFriendships();
-	if (document.querySelector('#friend-add-form')) showProfile(profileReturnAction);
-	if (document.querySelector('#friend-requests-back')) showFriendRequests();
-	if (document.querySelector('#my-group-invites')) showProfile(profileReturnAction);
-	if (document.querySelector('#group-invites-back')) showGroupInvites();
-}
-
-function saveSharedFriendRequests(requests: FriendRequest[]): void {
-	friendRequests = requests;
-	writeStoredJson(sharedFriendRequestsKey, requests);
-	refreshSharedState();
-}
-
-function getSharedGroupInvites(): GroupInvite[] {
-	return readStoredJson<GroupInvite[]>(sharedGroupInvitesKey) ?? [];
-}
-
-function saveSharedGroupInvites(invites: GroupInvite[]): void {
-	groupInvites = invites;
-	writeStoredJson(sharedGroupInvitesKey, invites);
-}
-
-async function syncFriendRequestsFromServer(): Promise<void> {
-	try {
-		const response = await fetch('/api/friend-requests');
-		if (!response.ok) return;
-		const serverRequests = await response.json() as FriendRequest[];
-		const localRequests = getSharedFriendRequests();
-		const requests = [...localRequests];
-		for (const request of serverRequests) {
-			const existingIndex = requests.findIndex((item) => item.id === request.id);
-			if (existingIndex >= 0) requests[existingIndex] = request;
-			else requests.push(request);
-		}
-		if (!serverRequests.length) {
-			for (const request of localRequests.filter((item) => item.status === 'pending')) publishFriendRequest(request);
-		}
-		if (JSON.stringify(requests) === JSON.stringify(friendRequests)) return;
-		friendRequests = requests;
-		writeStoredJson(sharedFriendRequestsKey, requests);
-		syncAcceptedFriendships();
-		if (document.querySelector('#friend-add-form')) showProfile(profileReturnAction);
-		if (document.querySelector('#friend-requests-back')) showFriendRequests();
-	} catch {
-		// localStorage remains available when the development server is offline
-	}
-}
-
-function publishFriendRequest(request: FriendRequest): void {
-	void fetch('/api/friend-requests', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request) }).catch(() => undefined);
-}
-
-function acceptFriendRequestOnServer(requestId: string): void {
-	void fetch(`/api/friend-requests/${encodeURIComponent(requestId)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'accepted' }) }).catch(() => undefined);
-}
-
-function removeFriendRequestOnServer(requestId: string): void {
-	void fetch(`/api/friend-requests/${encodeURIComponent(requestId)}`, { method: 'DELETE' }).catch(() => undefined);
-}
-
-async function syncGroupInvitesFromServer(): Promise<void> {
-	try {
-		const response = await fetch('/api/group-invites');
-		if (!response.ok) return;
-		const serverInvites = await response.json() as GroupInvite[];
-		const localInvites = getSharedGroupInvites();
-		const invites = [...localInvites];
-		for (const invite of serverInvites) {
-			const existingIndex = invites.findIndex((item) => item.id === invite.id);
-			if (existingIndex >= 0) invites[existingIndex] = invite;
-			else invites.push(invite);
-		}
-		if (!serverInvites.length) {
-			for (const invite of localInvites.filter((item) => item.status === 'pending')) publishGroupInvite(invite);
-		}
-		if (JSON.stringify(invites) === JSON.stringify(groupInvites)) return;
-		groupInvites = invites;
-		writeStoredJson(sharedGroupInvitesKey, invites);
-		saveAppState();
-		if (document.querySelector('#my-group-invites')) showProfile(profileReturnAction);
-		if (document.querySelector('#group-invites-back')) showGroupInvites();
-	} catch {
-		// localStorage remains available when the development server is offline
-	}
-}
-
-function publishGroupInvite(invite: GroupInvite): void {
-	void fetch('/api/group-invites', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(invite) }).catch(() => undefined);
-}
-
-function updateGroupInviteOnServer(inviteId: string, status: GroupInvite['status']): void {
-	void fetch(`/api/group-invites/${encodeURIComponent(inviteId)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) }).catch(() => undefined);
-}
-
-function syncAcceptedFriendships(): void {
-	const acceptedRequests = friendRequests.filter((request) => request.status === 'accepted' && (request.from === ownUsername || request.to === ownUsername));
-	const acceptedFriends = acceptedRequests.map((request) => {
-		const friendId = request.from === ownUsername ? request.friendId : request.from.replace(/^@/, '');
-		return getFriendById(friendId);
-	});
-	const newConnections = acceptedFriends.filter((friend) => !connections.some((connection) => connection.id.toLowerCase() === friend.id.toLowerCase()));
-	if (!newConnections.length) return;
-	connections = [...connections, ...newConnections];
-	saveAppState();
-}
-
-function syncSharedFriends(): void {
-	friendRequests = getSharedFriendRequests();
-	syncAcceptedFriendships();
-	if (document.querySelector('#friend-add-form')) showProfile(profileReturnAction);
-	if (document.querySelector('#friend-requests-back')) showFriendRequests();
-}
-
-async function connectCloudTimeline(): Promise<void> {
-	if (!firebaseEnabled || stopPostsListener) return;
-	try {
-		stopPostsListener = await subscribeToPosts((cloudPosts) => {
-			const cloudPostIds = new Set(cloudPosts.map((post) => post.id));
-			const localPosts = posts.filter((post) => !cloudPostIds.has(post.id));
-			posts.splice(0, posts.length, ...cloudPosts, ...localPosts);
-			if (document.querySelector('#timeline')) render();
-		}, () => showInfoDialog('Firebaseに接続できません', 'Firebaseの設定とFirestoreのルールを確認してください。'));
-	} catch {
-		showInfoDialog('Firebaseに接続できません', 'Firebaseの設定と匿名ログインを確認してください。');
-	}
-}
 
 function saveAppState(): void {
-	connections = uniqueConnections(connections);
-	const state: SavedState = { profileName, username: ownUsername.slice(1), profileImage, notificationsEnabled, profileMessage, profilePublic, fontSize, connections, friendRequests, groupInvites, favorites, personalPosts };
-	writeTabJson('hakason-app-state', state);
+	const state: SavedState = { profileName, profileImage, notificationsEnabled, profileMessage, profilePublic, fontSize, connections, friendRequests, favorites, personalPosts };
+	try {
+		localStorage.setItem('hakason-app-state', JSON.stringify(state));
+	} catch {
+	}
 }
 
 function loadAppState(): void {
-	const state = readTabJson<Partial<SavedState>>('hakason-app-state');
-	if (!state) return;
 	try {
+		const saved = localStorage.getItem('hakason-app-state');
+		if (!saved) return;
+		const state = JSON.parse(saved) as Partial<SavedState>;
 		if (typeof state.profileName === 'string') profileName = state.profileName;
-		if (typeof state.username === 'string' && /^[A-Za-z0-9_]+$/.test(state.username)) ownUsername = `@${state.username}`;
 		if (typeof state.profileImage === 'string') profileImage = state.profileImage;
 		if (typeof state.notificationsEnabled === 'boolean') notificationsEnabled = state.notificationsEnabled;
 		if (typeof state.profileMessage === 'string') profileMessage = state.profileMessage;
 		if (typeof state.profilePublic === 'boolean') profilePublic = state.profilePublic;
 		if (state.fontSize === 'normal' || state.fontSize === 'large' || state.fontSize === 'x-large') fontSize = state.fontSize;
-		if (Array.isArray(state.connections)) connections = uniqueConnections(state.connections);
+		if (Array.isArray(state.connections)) connections = state.connections;
 		if (Array.isArray(state.friendRequests)) friendRequests = state.friendRequests;
-		if (Array.isArray(state.groupInvites)) groupInvites = state.groupInvites;
 		if (Array.isArray(state.favorites)) favorites = state.favorites;
 		if (Array.isArray(state.personalPosts)) personalPosts = state.personalPosts;
 	} catch {
@@ -332,7 +180,12 @@ function getCalendarStorageKey(weekStart: Date): string {
 
 function readCalendarWeekData(weekStart: Date): Record<string, number> {
 	const key = getCalendarStorageKey(weekStart);
-	return readStoredJson<Record<string, number>>(key) ?? {};
+	try {
+		const raw = window.localStorage.getItem(key);
+		return raw ? JSON.parse(raw) as Record<string, number> : {};
+	} catch {
+		return {};
+	}
 }
 
 function writeCalendarWeekData(weekStart: Date, entries: CalendarEntry[]): void {
@@ -341,7 +194,7 @@ function writeCalendarWeekData(weekStart: Date, entries: CalendarEntry[]): void 
 	entries.forEach((entry) => {
 		map[formatDateKey(entry.date)] = entry.amount;
 	});
-	writeStoredJson(key, map);
+	window.localStorage.setItem(key, JSON.stringify(map));
 }
 
 function getPostDate(post: Post): Date {
@@ -387,10 +240,6 @@ function formatWeekRange(weekStart: Date): string {
 }
 
 function render(): void {
-	if (!isAuthenticated) {
-		showLogin();
-		return;
-	}
 	root.innerHTML = `
 		<main class="home-shell">
 			<header class="home-header"><h1>ホーム</h1><button class="profile-button" id="profile-button" aria-label="マイページ"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5" /><path d="M5 20c.7-3.4 3.1-5.2 7-5.2s6.3 1.8 7 5.2" /></svg></button></header>
@@ -500,29 +349,18 @@ function renderGroups(): void {
 
 function renderGroupCard(group: Group): string {
 	return `<button class="group-card" data-group-id="${group.id}">
-		<div class="group-cover">
-			<span class="group-cover-icon" aria-hidden="true">${group.image}</span>
-			<div class="group-cover-text">
-				<strong>${group.name}</strong>
-				<small class="group-visibility">${group.visibility === 'private' ? '🔒 非公開' : '公開'}</small>
-			</div>
-		</div>
+		<div class="group-cover">${group.image}<strong>${group.name}</strong><small class="group-visibility">${group.visibility === 'private' ? '🔒 非公開' : '公開'}</small></div>
 		<div class="group-members">${group.members.map((member) => `<span title="${member}">${member.charAt(0)}</span>`).join('')}</div>
 	</button>`;
-	return `<article class="group-card" data-group-id="${group.id}" role="button" tabindex="0">
-			<div class="group-cover"><button class="group-menu" data-group-id="${group.id}" aria-label="${escapeHtml(group.name)}のメニュー">•••</button><span class="group-cover-icon">${group.image}</span><strong>${group.name}</strong><small class="group-visibility">${group.visibility === 'private' ? '🔒 非公開' : '公開'}</small></div>
-		<div class="group-members">${group.members.map((member) => `<span title="${member}">${member.charAt(0)}</span>`).join('')}</div><p class="group-member-names">メンバー: ${group.members.map((member) => escapeHtml(member)).join('、')}</p>
-	</article>`;
 }
 
 function renderGroupDetail(group: Group): void {
-	const myPost = group.posts.find((post) => post.name === profileName) ?? { id: `${group.id}-my-post`, name: profileName, time: 'あなたの投稿', image: '🍜', text: '今日のごはんを投稿しました！', reactions: 'リアクションを送る' };
+	const myPost: Post = { id: `${group.id}-my-post`, name: 'たかし', time: 'あなたの投稿', image: '🍜', text: '今日のごはんを投稿しました！', reactions: 'リアクションを送る' };
 	root.innerHTML = `<main class="home-shell group-shell">
 		<header class="home-header group-detail-header"><button class="header-back" id="group-back" aria-label="グループ一覧に戻る">‹</button><h1>タイムライン</h1><button class="profile-button" id="group-detail-profile-button" aria-label="マイページ"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5" /><path d="M5 20c.7-3.4 3.1-5.2 7-5.2s6.3 1.8 7 5.2" /></svg></button></header>
 		<div class="group-scroll group-posts-scroll">
 			<div class="timeline-group-name"><span class="post-avatar">${group.name.charAt(0)}</span><strong>${group.name}</strong></div>
-			<div class="group-member-summary"><strong>メンバー</strong><span>${group.members.map((member) => escapeHtml(member)).join('、')}</span></div>
-			<div class="timeline-post-list"><section class="my-post-pin"><p class="pin-label">あなたの投稿</p>${renderTimelinePost(myPost, true)}</section>${group.posts.filter((post) => post.id !== myPost.id).map((post) => renderTimelinePost(post, false)).join('')}</div>
+			<div class="timeline-post-list"><section class="my-post-pin"><p class="pin-label">あなたの投稿</p>${renderTimelinePost(myPost, true)}</section>${group.posts.map((post) => renderTimelinePost(post, false)).join('')}</div>
 		</div>
 		${renderNav('groups')}
 	</main>`;
@@ -586,14 +424,9 @@ function bindEvents(): void {
 	document.querySelector<HTMLButtonElement>('[data-screen="home"]')?.addEventListener('click', render);
 	document.querySelector<HTMLButtonElement>('[data-screen="groups"]')?.addEventListener('click', renderGroups);
 	document.querySelector<HTMLButtonElement>('[data-screen="calendar"]')?.addEventListener('click', renderCalendar);
-	document.querySelectorAll<HTMLElement>('.group-card[data-group-id]').forEach((card) => card.addEventListener('click', () => {
+	document.querySelectorAll<HTMLButtonElement>('[data-group-id]').forEach((card) => card.addEventListener('click', () => {
 		const group = groups.find((item) => item.id === card.dataset.groupId);
 		if (group) renderGroupDetail(group);
-	}));
-	document.querySelectorAll<HTMLButtonElement>('.group-menu').forEach((button) => button.addEventListener('click', (event) => {
-		event.stopPropagation();
-		const group = groups.find((item) => item.id === button.dataset.groupId);
-		if (group) showGroupMenu(group);
 	}));
 	document.querySelector<HTMLButtonElement>('#group-back')?.addEventListener('click', renderGroups);
 	document.querySelector<HTMLButtonElement>('#add-group')?.addEventListener('click', addGroup);
@@ -624,7 +457,6 @@ function bindEvents(): void {
 			showDeleteDialog(() => {
 				const index = posts.findIndex((post) => post.id === postId);
 				if (index >= 0) posts.splice(index, 1);
-				void deleteCloudPost(postId).catch(() => showInfoDialog('削除できませんでした', 'Firebaseへの接続を確認してください。'));
 				groups.forEach((group) => {
 					const groupIndex = group.posts.findIndex((post) => post.id === postId);
 					if (groupIndex >= 0) group.posts.splice(groupIndex, 1);
@@ -684,62 +516,8 @@ function showInfoDialog(title: string, message: string): void {
 	dialog.querySelector<HTMLButtonElement>('.info-close')?.addEventListener('click', () => dialog.remove());
 }
 
-function showGroupMenu(group: Group): void {
-	const dialog = document.createElement('div');
-	dialog.className = 'group-action-backdrop';
-	dialog.innerHTML = `<section class="group-action-dialog" role="dialog" aria-modal="true" aria-labelledby="group-action-title">
-		<h2 id="group-action-title">${escapeHtml(group.name)}</h2>
-		<button class="group-action-button" id="add-group-member">メンバーを招待</button>
-		<button class="group-action-button danger" id="delete-group">グループを削除</button>
-		<button class="group-action-cancel" id="cancel-group-action">キャンセル</button>
-	</section>`;
-	document.body.appendChild(dialog);
-	dialog.querySelector<HTMLButtonElement>('#cancel-group-action')?.addEventListener('click', () => dialog.remove());
-	dialog.querySelector<HTMLButtonElement>('#add-group-member')?.addEventListener('click', () => {
-		dialog.remove();
-		showInviteGroupMemberDialog(group);
-	});
-	dialog.querySelector<HTMLButtonElement>('#delete-group')?.addEventListener('click', () => {
-		dialog.remove();
-		showDeleteDialog(() => {
-			const index = groups.findIndex((item) => item.id === group.id);
-			if (index >= 0) groups.splice(index, 1);
-			renderGroups();
-		});
-	});
-	dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.remove(); });
-}
-
-function showInviteGroupMemberDialog(group: Group): void {
-	const availableFriends = connections.filter((friend) => !group.members.includes(friend.name));
-	const dialog = document.createElement('div');
-	dialog.className = 'group-dialog-backdrop';
-	dialog.innerHTML = `<section class="group-dialog" role="dialog" aria-modal="true" aria-labelledby="member-dialog-title">
-		<div class="group-dialog-header"><div><p class="dialog-kicker">GROUP MEMBERS</p><h2 id="member-dialog-title">メンバーを招待</h2></div><button class="dialog-close" id="cancel-member-dialog" aria-label="閉じる">×</button></div>
-		<div class="group-friend-list">${availableFriends.length ? availableFriends.map((friend) => `<label class="group-friend-option"><input type="checkbox" name="new-group-member" value="${escapeHtml(friend.name)}"><span class="friend-avatar">${friend.photo}</span><strong>${escapeHtml(friend.name)}</strong><span class="friend-check">✓</span></label>`).join('') : '<p class="empty-connections">追加できるフレンドはいません</p>'}</div>
-		<button class="group-create-button" id="confirm-group-members" ${availableFriends.length ? '' : 'disabled'}>招待を送る</button>
-	</section>`;
-	document.body.appendChild(dialog);
-	dialog.querySelector<HTMLButtonElement>('#cancel-member-dialog')?.addEventListener('click', () => dialog.remove());
-	dialog.querySelector<HTMLButtonElement>('#confirm-group-members')?.addEventListener('click', () => {
-		const selected = Array.from(dialog.querySelectorAll<HTMLInputElement>('input[name="new-group-member"]:checked')).map((input) => input.value);
-		selected.forEach((memberName) => {
-			const friend = connections.find((candidate) => candidate.name === memberName);
-			if (!friend || groupInvites.some((invite) => invite.groupId === group.id && invite.inviteeId === friend.id && invite.status === 'pending')) return;
-			const invite: GroupInvite = { id: `group-invite-${Date.now()}-${friend.id}`, groupId: group.id, groupName: group.name, groupImage: group.image, groupMembers: group.members, groupVisibility: group.visibility, inviteeId: friend.id, from: ownUsername, status: 'pending' };
-			groupInvites = [...groupInvites, invite];
-			publishGroupInvite(invite);
-		});
-		saveSharedGroupInvites(groupInvites);
-		saveAppState();
-		dialog.remove();
-		renderGroups();
-	});
-	dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.remove(); });
-}
-
 function addGroup(): void {
-	const friends = connections;
+	const friends = [...new Set([...reactions.map((reaction) => reaction.name), 'けん', 'みさき'])];
 	const dialog = document.createElement('div');
 	dialog.className = 'group-dialog-backdrop';
 	dialog.innerHTML = `<section class="group-dialog" role="dialog" aria-modal="true" aria-labelledby="group-dialog-title">
@@ -752,7 +530,7 @@ function addGroup(): void {
 			<label class="group-visibility-option"><input type="radio" name="group-visibility" value="private"><span>非公開</span><small>招待した人だけが参加できます</small></label>
 		</div>
 		<div class="group-friends-heading"><strong>フレンドを招待</strong><small>あとから追加することもできます</small></div>
-		<div class="group-friend-list">${friends.length ? friends.map((friend) => `<label class="group-friend-option"><input type="checkbox" name="group-friend" value="${escapeHtml(friend.name)}"><span class="friend-avatar">${escapeHtml(friend.photo)}</span><strong>${escapeHtml(friend.name)}</strong><span class="friend-check">✓</span></label>`).join('') : '<p class="empty-connections">マイページにフレンドがいません</p>'}</div>
+		<div class="group-friend-list">${friends.map((friend) => `<label class="group-friend-option"><input type="checkbox" name="group-friend" value="${friend}"><span class="friend-avatar">${friend.charAt(0)}</span><strong>${friend}</strong><span class="friend-check">✓</span></label>`).join('')}</div>
 		<button class="group-create-button" id="create-group">グループを作成する</button>
 	</section>`;
 	document.body.appendChild(dialog);
@@ -775,32 +553,19 @@ function createGroup(): void {
 	const members = Array.from(document.querySelectorAll<HTMLInputElement>('input[name="group-friend"]:checked')).map((input) => input.value);
 	const visibilityInput = document.querySelector<HTMLInputElement>('input[name="group-visibility"]:checked');
 	const visibility: GroupVisibility = visibilityInput?.value === 'private' ? 'private' : 'public';
-	const group: Group = { id: `group-${Date.now()}`, name, image: '👨‍👩‍👧', members: [profileName], posts: [], visibility };
-	groups.push(group);
-	members.forEach((memberName, index) => {
-		const friend = connections.find((connection) => connection.name === memberName);
-		if (!friend) return;
-		const invite: GroupInvite = { id: `${group.id}-invite-${index}-${friend.id}`, groupId: group.id, groupName: group.name, groupImage: group.image, groupMembers: group.members, groupVisibility: group.visibility, inviteeId: friend.id, from: ownUsername, status: 'pending' };
-		groupInvites = [...groupInvites, invite];
-		publishGroupInvite(invite);
-	});
-	saveSharedGroupInvites(groupInvites);
-	saveAppState();
+	groups.push({ id: `group-${Date.now()}`, name, image: '👨‍👩‍👧', members: ['たかし', ...members], posts: [], visibility });
 	document.querySelector('.group-dialog-backdrop')?.remove();
 	renderGroups();
 }
 
 function showMessages(name: string): void {
-	stopMessagesListener?.();
-	stopMessagesListener = null;
-	const initialMessages = firebaseEnabled ? '' : `<div class="message-photo outgoing"><div class="photo-preview">🍜</div><p>今日のごはんを投稿しました！</p></div>
-			${sentReactions.filter((reaction) => reaction.recipient === name).map((reaction) => `<div class="reaction-message outgoing"><img src="/reaction-${reaction.stamp}.png" alt="送信したリアクション"></div>`).join('')}
-			<div class="message-row incoming"><span class="message-avatar">${name.charAt(0)}</span><div class="message-bubble">投稿を見てくれてありがとう！</div></div>`;
 	root.innerHTML = `<main class="home-shell message-shell">
 		<header class="home-header message-header"><button class="header-back" id="message-back" aria-label="タイムラインに戻る">‹</button><h1>メッセージ</h1><button class="profile-button" aria-label="プロフィール">◉</button></header>
 		<div class="message-person"><span class="post-avatar">${name.charAt(0)}</span><strong>${name}</strong></div>
 		<div class="message-list" id="message-list">
-			${initialMessages}
+			<div class="message-photo outgoing"><div class="photo-preview">🍜</div><p>今日のごはんを投稿しました！</p></div>
+			${sentReactions.filter((reaction) => reaction.recipient === name).map((reaction) => `<div class="reaction-message outgoing"><img src="/reaction-${reaction.stamp}.png" alt="送信したリアクション"></div>`).join('')}
+			<div class="message-row incoming"><span class="message-avatar">${name.charAt(0)}</span><div class="message-bubble">投稿を見てくれてありがとう！</div></div>
 		</div>
 		<form class="message-composer" id="message-composer">
 			<input id="message-input" autocomplete="off" placeholder="メッセージを入力..." aria-label="メッセージを入力">
@@ -815,25 +580,11 @@ function showMessages(name: string): void {
 		const input = document.querySelector<HTMLInputElement>('#message-input');
 		const text = input?.value.trim();
 		if (!input || !text) return;
-		if (firebaseEnabled) {
-			void sendCloudMessage(name, text, profileName).catch(() => showInfoDialog('送信できませんでした', 'Firebaseへの接続を確認してください。'));
-		} else {
-			document.querySelector('#message-list')?.insertAdjacentHTML('beforeend', `<div class="message-row outgoing"><div class="message-bubble">${escapeHtml(text)}</div></div>`);
-		}
+		document.querySelector('#message-list')?.insertAdjacentHTML('beforeend', `<div class="message-row outgoing"><div class="message-bubble">${escapeHtml(text)}</div></div>`);
 		input.value = '';
 		document.querySelector('#message-list')?.scrollTo({ top: 99999, behavior: 'smooth' });
 	});
 	bindEvents();
-	if (firebaseEnabled) {
-		void subscribeToMessages(name, profileName, (messages) => {
-			const messageList = document.querySelector('#message-list');
-			if (!messageList) return;
-			messageList.innerHTML = messages.map((message) => message.senderName === profileName
-				? `<div class="message-row outgoing"><div class="message-bubble">${escapeHtml(message.text)}</div></div>`
-				: `<div class="message-row incoming"><span class="message-avatar">${name.charAt(0)}</span><div class="message-bubble">${escapeHtml(message.text)}</div></div>`).join('');
-			messageList.scrollTo({ top: 99999 });
-		}, () => showInfoDialog('メッセージを取得できません', 'Firebaseの設定とFirestoreのルールを確認してください。')).then((stop) => { stopMessagesListener = stop; });
-	}
 }
 
 function showAdvice(): void {
@@ -863,7 +614,9 @@ async function loadAdvice(): Promise<void> {
 		return;
 	}
 	try {
-		const advice = await requestAdvice(images);
+		const response = await fetch('/api/advice', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ images }) });
+		const advice = await response.json() as { summary?: string; tips?: string[]; error?: string };
+		if (!response.ok) throw new Error(advice.error || 'AI分析に失敗しました');
 		title.textContent = advice.summary || '今日の食事アドバイス';
 		summary.textContent = '投稿画像をもとにした、日々の食事改善のヒントです。';
 		results.innerHTML = (advice.tips ?? []).map((tip, index) => `<section class="advice-card"><span>${['🥕', '💧', '🍽️'][index % 3]}</span><div><strong>おすすめ ${index + 1}</strong><p>${escapeHtml(tip)}</p></div></section>`).join('');
@@ -878,19 +631,18 @@ function showProfile(returnAction: (() => void) | null = render): void {
 	profileReturnAction = returnAction ?? render;
 	const pendingOutgoing = friendRequests.filter((request) => request.from === ownUsername && request.status === 'pending');
 	const pendingIncoming = friendRequests.filter((request) => request.to === ownUsername && request.status === 'pending');
-	const pendingGroupInvites = groupInvites.filter((invite) => invite.inviteeId === ownUsername.replace('@', '') && invite.status === 'pending');
 	root.innerHTML = `<main class="home-shell profile-screen">
 		<header class="home-header"><button class="profile-back" id="profile-back" aria-label="前の画面に戻る">‹</button><h1>マイページ</h1><button class="profile-button" aria-label="マイページ"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5" /><path d="M5 20c.7-3.4 3.1-5.2 7-5.2s6.3 1.8 7 5.2" /></svg></button></header>
 		<div class="home-scroll">
 		<section class="profile-content">
 			${profileAvatarMarkup('profile-large-avatar')}
-			<h2>${!profilePublic ? '<span class="private-lock" aria-label="非公開">🔒</span>' : ''}${escapeHtml(profileName)}</h2><p class="profile-handle">${escapeHtml(ownUsername)}</p>${profileMessage ? `<p class="profile-message">${escapeHtml(profileMessage)}</p>` : ''}<p class="profile-visibility">${profilePublic ? '公開プロフィール' : '非公開プロフィール'}</p>
+			<h2>${!profilePublic ? '<span class="private-lock" aria-label="非公開">🔒</span>' : ''}${escapeHtml(profileName)}</h2><p class="profile-handle">@my_gohan</p>${profileMessage ? `<p class="profile-message">${escapeHtml(profileMessage)}</p>` : ''}<p class="profile-visibility">${profilePublic ? '公開プロフィール' : '非公開プロフィール'}</p>
 			<div class="profile-stats profile-stats-two-row">
 				<button class="profile-stat-button" id="my-posts"><strong>12</strong><small>投稿</small></button>
-				<button class="profile-stat-button" id="my-connections"><strong>${uniqueConnections(connections).length}</strong><small>フレンド</small></button>
+				<button class="profile-stat-button" id="my-connections"><strong>${new Set(connections.map((connection) => connection.id)).size}</strong><small>フレンド</small></button>
 				<button class="profile-stat-button" id="my-favorites"><strong>${favorites.length}</strong><small>お気に入り</small></button>
 				<button class="profile-stat-button" id="my-friend-requests"><strong>${pendingIncoming.length}</strong><small>フレンド申請</small></button>
-				<button class="profile-stat-button" id="my-group-invites"><strong>${pendingGroupInvites.length}</strong><small>招待されたグループ</small></button>
+				<button class="profile-stat-button" id="my-group-invites"><strong>${groupInvites.filter((invite) => invite.inviteeId === ownUsername.replace('@', '') && invite.status === 'pending').length}</strong><small>招待されたグループ</small></button>
 			</div>
 			<button class="profile-action" id="edit-profile">プロフィールを編集</button>
 			<section class="friend-add-section" aria-labelledby="friend-add-title">
@@ -935,7 +687,6 @@ function showProfile(returnAction: (() => void) | null = render): void {
 	document.querySelector<HTMLButtonElement>('#my-connections')?.addEventListener('click', showConnections);
 	document.querySelector<HTMLButtonElement>('#my-favorites')?.addEventListener('click', showFavorites);
 	document.querySelector<HTMLButtonElement>('#my-friend-requests')?.addEventListener('click', showFriendRequests);
-	document.querySelector<HTMLButtonElement>('#my-group-invites')?.addEventListener('click', showGroupInvites);
 	document.querySelector<HTMLButtonElement>('#edit-profile')?.addEventListener('click', showProfileEdit);
 	document.querySelectorAll<HTMLButtonElement>('[data-font-size]').forEach((button) => button.addEventListener('click', () => {
 			const nextFontSize = button.dataset.fontSize;
@@ -962,26 +713,20 @@ function showProfile(returnAction: (() => void) | null = render): void {
 		const input = document.querySelector<HTMLInputElement>('#friend-username');
 		const status = document.querySelector<HTMLElement>('#friend-add-status');
 		const username = input?.value.trim().replace(/^@/, '').toLowerCase() ?? '';
-		if (!username || username === ownUsername.slice(1).toLowerCase() || !/^[a-z0-9_]+$/.test(username)) {
-			if (status) status.textContent = '相手のユーザー名を正しく入力してください';
+		const friend = friendDirectory.find((candidate) => candidate.id.toLowerCase() === username);
+		if (!friend) {
+			if (status) status.textContent = 'そのユーザー名は見つかりませんでした';
 			return;
 		}
-		const friend = getFriendById(username);
-		if (connections.some((connection) => connection.id.toLowerCase() === friend.id.toLowerCase())) {
+		if (connections.some((connection) => connection.id === friend.id)) {
 			if (status) status.textContent = 'すでにつながっています';
-			return;
-		}
-		if (friendRequests.some((request) => request.status === 'accepted' && ((request.from === ownUsername && request.to === `@${friend.id}`) || (request.to === ownUsername && request.from === `@${friend.id}`)))) {
-			if (status) status.textContent = 'すでにフレンドです';
 			return;
 		}
 		if (friendRequests.some((request) => request.from === ownUsername && request.friendId === friend.id && request.status === 'pending')) {
 			if (status) status.textContent = 'すでに申請中です';
 			return;
 		}
-		const request = { id: `request-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, from: ownUsername, to: `@${friend.id}`, friendId: friend.id, status: 'pending' as const };
-		saveSharedFriendRequests([...getSharedFriendRequests(), request]);
-		publishFriendRequest(request);
+		friendRequests = [...friendRequests, { id: `request-${Date.now()}`, from: ownUsername, to: `@${friend.id}`, friendId: friend.id, status: 'pending' }];
 		saveAppState();
 		if (status) status.textContent = `${friend.name}さんへ申請を送りました。承認されるとフレンドになります`;
 		if (input) input.value = '';
@@ -989,9 +734,9 @@ function showProfile(returnAction: (() => void) | null = render): void {
 	document.querySelectorAll<HTMLButtonElement>('[data-accept-request]').forEach((button) => button.addEventListener('click', () => {
 		const request = friendRequests.find((item) => item.id === button.dataset.acceptRequest && item.status === 'pending');
 		if (!request) return;
-		const friend = getFriendById(request.from.replace(/^@/, ''));
-		saveSharedFriendRequests(getSharedFriendRequests().map((item) => item.id === request.id ? { ...item, status: 'accepted' } : item));
-		acceptFriendRequestOnServer(request.id);
+		const friend = friendDirectory.find((candidate) => candidate.id === request.from.replace(/^@/, ''));
+		if (!friend) return;
+		friendRequests = friendRequests.map((item) => item.id === request.id ? { ...item, status: 'accepted' } : item);
 		if (!connections.some((connection) => connection.id === friend.id)) connections = [...connections, { ...friend }];
 		saveAppState();
 		showProfile(profileReturnAction);
@@ -1022,71 +767,32 @@ function showFriendRequests(): void {
 	root.innerHTML = `<main class="profile-posts-screen">
 		<header class="profile-header"><button class="profile-back" id="friend-requests-back" aria-label="マイページに戻る">‹</button><h1>フレンド申請</h1></header>
 		<section class="friend-request-list-page">${requests.length ? requests.map((request) => {
-			const friend = getFriendById(request.from.replace(/^@/, ''));
-			return `<div class="incoming-request request-card"><div><strong>${escapeHtml(friend.name)}</strong><small>${escapeHtml(request.from)}</small></div><button type="button" data-accept-request-page="${request.id}">承認する</button></div>`;
+			const friend = friendDirectory.find((candidate) => candidate.id === request.friendId);
+			return `<div class="incoming-request request-card"><div><strong>${escapeHtml(friend?.name ?? request.from)}</strong><small>${escapeHtml(request.from)}</small></div><button type="button" data-accept-request-page="${request.id}">承認する</button></div>`;
 		}).join('') : '<p class="empty-connections">届いているフレンド申請はありません</p>'}</section>
 	</main>`;
 	document.querySelector<HTMLButtonElement>('#friend-requests-back')?.addEventListener('click', () => showProfile());
 	document.querySelectorAll<HTMLButtonElement>('[data-accept-request-page]').forEach((button) => button.addEventListener('click', () => {
 		const request = friendRequests.find((item) => item.id === button.dataset.acceptRequestPage && item.status === 'pending');
 		if (!request) return;
-		const friend = getFriendById(request.from.replace(/^@/, ''));
-		saveSharedFriendRequests(getSharedFriendRequests().map((item) => item.id === request.id ? { ...item, status: 'accepted' } : item));
-		acceptFriendRequestOnServer(request.id);
+		const friend = friendDirectory.find((candidate) => candidate.id === request.friendId);
+		if (!friend) return;
+		friendRequests = friendRequests.map((item) => item.id === request.id ? { ...item, status: 'accepted' } : item);
 		if (!connections.some((connection) => connection.id === friend.id)) connections = [...connections, { ...friend }];
 		saveAppState();
 		showFriendRequests();
 	}));
 }
 
-function showGroupInvites(): void {
-	const invites = groupInvites.filter((invite) => invite.inviteeId === ownUsername.replace('@', '') && invite.status === 'pending');
-	root.innerHTML = `<main class="profile-posts-screen">
-		<header class="profile-header"><button class="profile-back" id="group-invites-back" aria-label="マイページに戻る">‹</button><h1>招待されたグループ</h1></header>
-		<section class="friend-request-list-page">${invites.length ? invites.map((invite) => `<div class="incoming-request request-card group-invite-card"><div class="group-invite-summary"><span class="group-invite-icon" aria-hidden="true">${escapeHtml(invite.groupImage || '👥')}</span><div><strong>${escapeHtml(invite.groupName)}</strong><small>${escapeHtml(invite.from)} からの招待</small></div></div><div class="invite-actions"><button type="button" data-accept-group-invite="${invite.id}">承認</button><button type="button" class="decline" data-decline-group-invite="${invite.id}">拒否</button></div></div>`).join('') : '<p class="empty-connections">届いているグループ招待はありません</p>'}</section>
-	</main>`;
-	document.querySelector<HTMLButtonElement>('#group-invites-back')?.addEventListener('click', () => showProfile());
-	document.querySelectorAll<HTMLButtonElement>('[data-accept-group-invite]').forEach((button) => button.addEventListener('click', () => {
-		const invite = groupInvites.find((item) => item.id === button.dataset.acceptGroupInvite && item.status === 'pending');
-		if (!invite) return;
-		const group = groups.find((item) => item.id === invite.groupId);
-		if (group) {
-			if (!group.members.includes(profileName)) group.members.push(profileName);
-		} else {
-			groups.push({ id: invite.groupId, name: invite.groupName, image: invite.groupImage || '👥', members: [...(invite.groupMembers ?? []).filter((member) => member !== profileName), profileName], posts: [], visibility: invite.groupVisibility });
-		}
-		groupInvites = groupInvites.map((item) => item.id === invite.id ? { ...item, status: 'accepted' } : item);
-		saveSharedGroupInvites(groupInvites);
-		updateGroupInviteOnServer(invite.id, 'accepted');
-		saveAppState();
-		showGroupInvites();
-	}));
-	document.querySelectorAll<HTMLButtonElement>('[data-decline-group-invite]').forEach((button) => button.addEventListener('click', () => {
-		const invite = groupInvites.find((item) => item.id === button.dataset.declineGroupInvite && item.status === 'pending');
-		if (!invite) return;
-		groupInvites = groupInvites.map((item) => item.id === invite.id ? { ...item, status: 'declined' } : item);
-		saveSharedGroupInvites(groupInvites);
-		updateGroupInviteOnServer(invite.id, 'declined');
-		saveAppState();
-		showGroupInvites();
-	}));
-}
-
 function showConnections(): void {
-	const uniqueFriendConnections = uniqueConnections(connections);
 	root.innerHTML = `<main class="profile-posts-screen">
-		<header class="profile-header"><button class="profile-back" id="connections-back" aria-label="マイページに戻る">‹</button><h1>フレンド</h1></header>
-		<section class="connections-list">${uniqueFriendConnections.length ? uniqueFriendConnections.map((connection) => `<div class="connection-row">${friendAvatarMarkup(connection.name, connection.photo)}<div class="connection-copy"><strong>${escapeHtml(connection.name)}</strong><small>${escapeHtml(connection.message)} · @${escapeHtml(connection.id)}</small></div><button class="connection-remove" data-connection-id="${connection.id}">削除</button></div>`).join('') : '<p class="empty-connections">フレンドはいません</p>'}</section>
+		<header class="profile-header"><button class="profile-back" id="connections-back" aria-label="マイページに戻る">‹</button><h1>つながり</h1></header>
+		<section class="connections-list">${connections.length ? connections.map((connection) => `<div class="connection-row">${friendAvatarMarkup(connection.name, connection.photo)}<div class="connection-copy"><strong>${escapeHtml(connection.name)}</strong><small>${escapeHtml(connection.message)} · @${escapeHtml(connection.id)}</small></div><button class="connection-remove" data-connection-id="${connection.id}">削除</button></div>`).join('') : '<p class="empty-connections">つながりはありません</p>'}</section>
 	</main>`;
 	document.querySelector<HTMLButtonElement>('#connections-back')?.addEventListener('click', () => showProfile());
 	document.querySelectorAll<HTMLButtonElement>('.connection-remove').forEach((button) => button.addEventListener('click', () => {
-		showDeleteConfirm('このフレンドを削除しますか？', () => {
-			const connectionId = button.dataset.connectionId;
-			const removedRequests = friendRequests.filter((request) => request.status === 'accepted' && ((request.from === ownUsername && request.friendId === connectionId) || (request.to === ownUsername && request.from.replace(/^@/, '') === connectionId)));
-			connections = connections.filter((connection) => connection.id !== connectionId);
-			friendRequests = friendRequests.filter((request) => !removedRequests.includes(request));
-			saveSharedFriendRequests(friendRequests);
-			removedRequests.forEach((request) => removeFriendRequestOnServer(request.id));
+		showDeleteConfirm('このつながりを削除しますか？', () => {
+			connections = connections.filter((connection) => connection.id !== button.dataset.connectionId);
 			saveAppState();
 			showConnections();
 		});
@@ -1108,7 +814,6 @@ function showProfileEdit(): void {
 		<form class="profile-edit-form" id="profile-edit-form">
 			<label class="edit-photo-label" for="profile-photo">${profileAvatarMarkup('edit-avatar')}<span>プロフィール写真を変更</span><input id="profile-photo" type="file" accept="image/*"></label>
 			<label class="edit-field">名前<input id="profile-name" type="text" value="${escapeHtml(profileName)}" maxlength="30" required></label>
-			<label class="edit-field">ユーザー名<input id="profile-username" type="text" value="${escapeHtml(ownUsername.replace(/^@/, ''))}" maxlength="20" pattern="[A-Za-z0-9_]+" placeholder="英数字と_が使えます" required></label>
 			<label class="edit-field">一言メッセージ<textarea id="profile-message" maxlength="100" placeholder="好きな食べ物やひとことを入力">${escapeHtml(profileMessage)}</textarea></label>
 			<label class="notification-row">通知<div class="toggle-wrap"><input id="notifications" type="checkbox" ${notificationsEnabled ? 'checked' : ''}><span class="toggle"></span></div></label>
 			<label class="notification-row">公開設定<div class="toggle-wrap"><input id="profile-public" type="checkbox" ${profilePublic ? 'checked' : ''}><span class="toggle"></span></div></label>
@@ -1136,25 +841,14 @@ function handleProfilePhoto(event: Event): void {
 function saveProfile(event: SubmitEvent): void {
 	event.preventDefault();
 	const nameInput = document.querySelector<HTMLInputElement>('#profile-name');
-	const usernameInput = document.querySelector<HTMLInputElement>('#profile-username');
 	const messageInput = document.querySelector<HTMLTextAreaElement>('#profile-message');
 	const notificationInput = document.querySelector<HTMLInputElement>('#notifications');
 	const publicInput = document.querySelector<HTMLInputElement>('#profile-public');
 	profileName = nameInput?.value.trim() || profileName;
-	const nextUsername = usernameInput?.value.trim() ?? '';
-	if (!nextUsername || !/^[A-Za-z0-9_]+$/.test(nextUsername)) {
-		usernameInput?.focus();
-		usernameInput?.setCustomValidity('ユーザー名は英数字と_のみで入力してください');
-		usernameInput?.reportValidity();
-		return;
-	}
-	usernameInput?.setCustomValidity('');
-	ownUsername = `@${nextUsername}`;
 	profileMessage = messageInput?.value.trim() ?? profileMessage;
 	notificationsEnabled = notificationInput?.checked ?? notificationsEnabled;
 	profilePublic = publicInput?.checked ?? profilePublic;
 	saveAppState();
-	publishOwnProfile();
 	showProfile();
 }
 
@@ -1182,14 +876,6 @@ function showCamera(): void {
 		const image = preview.querySelector<HTMLImageElement>('img');
 		if (image) image.style.transform = `rotate(${rotation}deg)`;
 	};
-	const addPostToLocalFeeds = (post: Post): void => {
-		posts.unshift(post);
-		personalPosts.unshift({ ...post, reactions: 'まだリアクションはありません' });
-		groups.filter((group) => group.members.includes(profileName)).forEach((group) => {
-			group.posts = [post, ...group.posts.filter((groupPost) => groupPost.id !== post.id)];
-		});
-		saveAppState();
-	};
 	input.addEventListener('change', () => {
 		const file = input.files?.[0];
 		if (!file) return;
@@ -1215,24 +901,14 @@ function showCamera(): void {
 		updatePreview();
 	}));
 	document.querySelector<HTMLButtonElement>('#rotate-photo')?.addEventListener('click', () => { rotation = (rotation + 90) % 360; updatePreview(); });
-	publish.addEventListener('click', async () => {
-		publish.disabled = true;
-		publish.textContent = '投稿中...';
+	publish.addEventListener('click', () => {
 		const text = document.querySelector<HTMLTextAreaElement>('#post-comment')?.value.trim() || '今日のごはんを投稿しました！';
 		const postedAt = new Date().toISOString();
 		const post = { id: `post-${Date.now()}`, name: profileName, time: 'たった今', image: selectedImage, text, reactions: 'リアクションを送る', postedAt };
-		try {
-			const savedPost = await Promise.race([
-				createCloudPost(post),
-				new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error('投稿の保存がタイムアウトしました')), 5000)),
-			]);
-			addPostToLocalFeeds(savedPost);
-			render();
-		} catch {
-			addPostToLocalFeeds(post);
-			render();
-			showInfoDialog('この端末に投稿しました', 'クラウドへの画像保存に失敗したため、この端末のタイムラインと参加中のグループに反映しました。');
-		}
+		posts.unshift(post);
+		personalPosts.unshift({ ...post, reactions: 'まだリアクションはありません' });
+		saveAppState();
+		render();
 	});
 	document.querySelector('#camera-back')?.addEventListener('click', render);
 	document.querySelector<HTMLButtonElement>('#camera-profile-button')?.addEventListener('click', () => showProfile(showCamera));
@@ -1256,99 +932,6 @@ function showCamera(): void {
 	});
 }
 
-function showLogin(): void {
-	root.innerHTML = `<main class="auth-screen">
-		<section class="auth-card" aria-labelledby="auth-title">
-			<div class="auth-mark" aria-hidden="true">胃</div>
-			<p class="auth-kicker">ごはんでつながる</p>
-			<h1 id="auth-title">胃縁へようこそ</h1>
-			<p class="auth-description">食事の記録を、みんなとやさしく共有しよう。</p>
-			<div class="auth-tabs" role="tablist" aria-label="アカウント操作">
-				<button class="auth-tab active" id="login-tab" role="tab" aria-selected="true">ログイン</button>
-				<button class="auth-tab" id="register-tab" role="tab" aria-selected="false">新規登録</button>
-			</div>
-			<form class="auth-form" id="auth-form">
-				<label for="auth-nickname">ニックネーム</label>
-				<input id="auth-nickname" name="nickname" type="text" autocomplete="name" maxlength="30" placeholder="表示する名前を入力" required>
-				<label for="auth-username">ユーザー名</label>
-				<div class="auth-username-field"><span>@</span><input id="auth-username" name="username" type="text" autocomplete="username" pattern="[A-Za-z0-9_]+" inputmode="text" maxlength="20" placeholder="英数字と_が使えます" required></div>
-				<small class="auth-field-note">フレンド申請にはこのユーザー名を使います</small>
-				<label for="auth-password">パスワード</label>
-				<div class="auth-password-field"><input id="auth-password" name="password" type="password" autocomplete="current-password" placeholder="パスワードを入力" required><button class="password-toggle" id="password-toggle" type="button" aria-label="パスワードを表示"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg></button></div>
-				<p class="auth-error" id="auth-error" aria-live="polite"></p>
-				<button class="auth-submit" type="submit" id="auth-submit">ログインする</button>
-			</form>
-			<p class="auth-note">サーバー接続後はここからアカウント認証を行います。</p>
-		</section>
-	</main>`;
-	let registerMode = false;
-	const title = document.querySelector<HTMLElement>('#auth-title')!;
-	const form = document.querySelector<HTMLFormElement>('#auth-form')!;
-	const submit = document.querySelector<HTMLButtonElement>('#auth-submit')!;
-	const error = document.querySelector<HTMLElement>('#auth-error')!;
-	const nickname = document.querySelector<HTMLInputElement>('#auth-nickname')!;
-	const username = document.querySelector<HTMLInputElement>('#auth-username')!;
-	const password = document.querySelector<HTMLInputElement>('#auth-password')!;
-	const updateMode = (): void => {
-		registerMode = !registerMode;
-		title.textContent = registerMode ? 'アカウントを作成' : '胃縁へようこそ';
-		submit.textContent = registerMode ? 'アカウントを作成する' : 'ログインする';
-		password.autocomplete = registerMode ? 'new-password' : 'current-password';
-		document.querySelector('#login-tab')?.classList.toggle('active', !registerMode);
-		document.querySelector('#register-tab')?.classList.toggle('active', registerMode);
-		document.querySelector('#login-tab')?.setAttribute('aria-selected', String(!registerMode));
-		document.querySelector('#register-tab')?.setAttribute('aria-selected', String(registerMode));
-		error.textContent = '';
-	};
-	document.querySelector<HTMLButtonElement>('#login-tab')?.addEventListener('click', () => { if (registerMode) updateMode(); });
-	document.querySelector<HTMLButtonElement>('#register-tab')?.addEventListener('click', () => { if (!registerMode) updateMode(); });
-	document.querySelector<HTMLButtonElement>('#password-toggle')?.addEventListener('click', (event) => {
-		const toggle = event.currentTarget as HTMLButtonElement;
-		const isVisible = password.type === 'text';
-		password.type = isVisible ? 'password' : 'text';
-		toggle.setAttribute('aria-label', isVisible ? 'パスワードを表示' : 'パスワードを隠す');
-	});
-	form.addEventListener('submit', (event) => {
-		event.preventDefault();
-		const normalizedUsername = username.value.trim();
-		if (!normalizedUsername || !password.value || (registerMode && !nickname.value.trim())) {
-			error.textContent = registerMode ? 'ニックネーム、ユーザー名、パスワードを入力してください' : 'ユーザー名とパスワードを入力してください';
-			return;
-		}
-		if (!/^[A-Za-z0-9_]+$/.test(normalizedUsername)) {
-			error.textContent = 'ユーザー名は英数字と_のみ使えます';
-			return;
-		}
-		if (registerMode && (getAvailableFriends().some((friend) => friend.id.toLowerCase() === normalizedUsername.toLowerCase()) || ownUsername.slice(1).toLowerCase() === normalizedUsername.toLowerCase())) {
-			error.textContent = 'そのユーザー名は既に使われています';
-			return;
-		}
-		if (nickname.value.trim()) profileName = nickname.value.trim();
-		ownUsername = `@${normalizedUsername.toLowerCase()}`;
-		isAuthenticated = true;
-		writeTabJson('hakason-authenticated', true);
-		saveAppState();
-		publishOwnProfile();
-		refreshSharedState();
-		render();
-	});
-}
-
 loadAppState();
-isAuthenticated = readTabJson<boolean>('hakason-authenticated') === true;
-friendRequests = getSharedFriendRequests();
-groupInvites = getSharedGroupInvites();
-syncAcceptedFriendships();
-publishOwnProfile();
-window.addEventListener('storage', (event) => {
-	if (event.key === sharedProfilesKey || event.key === sharedFriendRequestsKey || event.key === sharedGroupInvitesKey) {
-		refreshSharedState();
-	}
-});
-window.setInterval(() => { void syncFriendRequestsFromServer(); }, 1500);
-window.setInterval(() => { void syncGroupInvitesFromServer(); }, 1500);
-void syncFriendRequestsFromServer();
-void syncGroupInvitesFromServer();
 applyFontSize();
 render();
-void connectCloudTimeline();
