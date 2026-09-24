@@ -31,6 +31,103 @@ const groups: Group[] = [
 const root = document.querySelector<HTMLDivElement>('#app')!;
 const sentReactions: SentReaction[] = [];
 
+type CalendarEntry = {
+	label: string;
+	emoji: string;
+	accent: 'blue' | 'pink' | 'orange';
+	amount: number;
+	date: Date;
+};
+
+let calendarWeekStart = getStartOfWeek(new Date());
+
+function getStartOfWeek(date: Date): Date {
+	const startOfWeek = new Date(date);
+	startOfWeek.setHours(0, 0, 0, 0);
+	const day = startOfWeek.getDay();
+	const diffToMonday = day === 0 ? -6 : 1 - day;
+	startOfWeek.setDate(startOfWeek.getDate() + diffToMonday);
+	return startOfWeek;
+}
+
+function getCalendarWeekDates(weekStart: Date): Date[] {
+	return Array.from({ length: 7 }, (_, index) => {
+		const date = new Date(weekStart);
+		date.setDate(weekStart.getDate() + index);
+		return date;
+	});
+}
+
+function formatDateKey(date: Date): string {
+	const year = date.getFullYear();
+	const month = String(date.getMonth() + 1).padStart(2, '0');
+	const day = String(date.getDate()).padStart(2, '0');
+	return `${year}-${month}-${day}`;
+}
+
+function getCalendarStorageKey(weekStart: Date): string {
+	return `meal-calendar-${formatDateKey(weekStart)}`;
+}
+
+function readCalendarWeekData(weekStart: Date): Record<string, number> {
+	const key = getCalendarStorageKey(weekStart);
+	try {
+		const raw = window.localStorage.getItem(key);
+		return raw ? JSON.parse(raw) as Record<string, number> : {};
+	} catch {
+		return {};
+	}
+}
+
+function writeCalendarWeekData(weekStart: Date, entries: CalendarEntry[]): void {
+	const key = getCalendarStorageKey(weekStart);
+	const map: Record<string, number> = {};
+	entries.forEach((entry) => {
+		map[formatDateKey(entry.date)] = entry.amount;
+	});
+	window.localStorage.setItem(key, JSON.stringify(map));
+}
+
+function buildCalendarEntries(weekStart: Date): CalendarEntry[] {
+	const stored = readCalendarWeekData(weekStart);
+	const days = getCalendarWeekDates(weekStart);
+	const legacySeed = [1, 1.5, 1, 1, 1.6, 1.2, 1.1];
+	const hasStoredEntries = Object.keys(stored).length > 0;
+	const hasLegacySeed = days.every((date, index) => {
+		const dateKey = formatDateKey(date);
+		return Number(stored[dateKey]) === legacySeed[index];
+	});
+
+	const initialized = days.map((date, index) => {
+		const emojis = ['🍽️', '🍜', '🥗', '🍙', '🍜', '🥗', '🥳'];
+		const label = `${date.getDate()}日 (${['日', '月', '火', '水', '木', '金', '土'][date.getDay()]})`;
+		const dateKey = formatDateKey(date);
+		const amount = Number.isFinite(stored[dateKey]) ? Math.round(Number(stored[dateKey])) : 0;
+		return { label, emoji: emojis[index], accent: getCalendarAccent(amount), amount, date };
+	});
+	const resetEntries = initialized.map((entry) => ({ ...entry, amount: 0, accent: getCalendarAccent(0) }));
+
+	if (!hasStoredEntries || hasLegacySeed) {
+		writeCalendarWeekData(weekStart, hasLegacySeed ? resetEntries : initialized);
+	}
+
+	if (hasLegacySeed) {
+		return resetEntries;
+	}
+
+	return initialized;
+}
+
+let calendarEntries = buildCalendarEntries(calendarWeekStart);
+
+function formatWeekRange(weekStart: Date): string {
+	const weekEnd = new Date(weekStart);
+	weekEnd.setDate(weekStart.getDate() + 6);
+	const startText = `${weekStart.getMonth() + 1}/${weekStart.getDate()}`;
+	const endText = `${weekEnd.getMonth() + 1}/${weekEnd.getDate()}`;
+	return `${startText}〜${endText}`;
+}
+
 function render(): void {
 	root.innerHTML = `
 		<main class="home-shell">
@@ -60,13 +157,69 @@ function render(): void {
 	bindEvents();
 }
 
-function renderNav(active: 'home' | 'groups'): string {
+function renderNav(active: 'home' | 'groups' | 'calendar'): string {
 	return `<nav class="bottom-nav" aria-label="メインメニュー">
 				<button class="nav-item ${active === 'home' ? 'active' : ''}" data-screen="home"><span>⌂</span><small>ホーム</small></button>
 				<button class="nav-item ${active === 'groups' ? 'active' : ''}" data-screen="groups"><span>♟</span><small>グループ</small></button>
 				<button class="nav-item"><span>✿</span><small>アドバイス</small></button>
-				<button class="nav-item"><span>□</span><small>カレンダー</small></button>
+				<button class="nav-item ${active === 'calendar' ? 'active' : ''}" data-screen="calendar"><span>□</span><small>カレンダー</small></button>
 			</nav>`;
+}
+
+function getCalendarAccent(amount: number): CalendarEntry['accent'] {
+	if (amount >= 3) return 'orange';
+	if (amount >= 2) return 'pink';
+	return 'blue';
+}
+
+function renderCalendar(): void {
+	calendarEntries = buildCalendarEntries(calendarWeekStart);
+	root.innerHTML = `
+		<main class="calendar-shell">
+			<header class="calendar-header">
+				<button class="calendar-nav-button" id="calendar-prev" aria-label="前の週">‹</button>
+				<div class="calendar-header-center">
+					<h1>カレンダー</h1>
+					<p>${formatWeekRange(calendarWeekStart)}</p>
+				</div>
+				<button class="calendar-nav-button" id="calendar-next" aria-label="次の週">›</button>
+				<button class="profile-button profile-button-calendar" aria-label="プロフィール">◉</button>
+			</header>
+			<div class="calendar-content">
+				<section class="calendar-card">
+					<div class="calendar-title-row">
+						<span class="little-dot"></span>
+						<span class="little-dot"></span>
+						<h2>今週の記録</h2>
+					</div>
+					<div class="calendar-grid">
+						${calendarEntries.map((day, index) => `
+						<div class="calendar-day ${day.accent}" data-card-index="${index}">
+							<div class="day-label">${day.label}</div>
+							<div class="day-art" aria-hidden="true">${day.emoji}</div>
+							<label class="calendar-amount-field">
+								<span>食べた量</span>
+								<div class="calendar-amount-row">
+									<input class="calendar-amount-input" type="number" min="0" max="5" step="1" value="${day.amount}" data-index="${index}" aria-label="${day.label}の食べた量">
+									<span>食</span>
+								</div>
+							</label>
+						</div>
+						`).join('')}
+					</div>
+				</section>
+				<div class="calendar-message-box">
+					<div class="message-mini-avatar">◉</div>
+					<div class="message-mini-copy">
+						<p class="message-mini-label">いえん博士からのコメント</p>
+						<p class="message-mini-text">今週の合計: ${calendarEntries.reduce((total, entry) => total + entry.amount, 0).toFixed(1)}食</p>
+					</div>
+				</div>
+			</div>
+			${renderNav('calendar')}
+		</main>
+	`;
+	bindEvents();
 }
 
 function renderGroups(): void {
@@ -131,8 +284,33 @@ function bindEvents(): void {
 	document.querySelector<HTMLButtonElement>('#show-all')?.addEventListener('click', () => document.querySelector('#timeline')?.scrollIntoView({ behavior: 'smooth' }));
 	document.querySelector<HTMLButtonElement>('#camera-button')?.addEventListener('click', showCamera);
 	document.querySelectorAll<HTMLButtonElement>('.reaction-bubble').forEach((bubble) => bubble.addEventListener('click', () => bubble.classList.toggle('selected')));
+	document.querySelectorAll<HTMLInputElement>('.calendar-amount-input').forEach((input) => {
+		input.addEventListener('change', () => {
+			const index = Number(input.dataset.index ?? '0');
+			const amount = Math.round(Number(input.value || 0));
+			calendarEntries[index].amount = amount;
+			calendarEntries[index].accent = getCalendarAccent(amount);
+			writeCalendarWeekData(calendarWeekStart, calendarEntries);
+			const dayCard = input.closest('.calendar-day');
+			dayCard?.classList.remove('blue', 'pink', 'orange');
+			dayCard?.classList.add(calendarEntries[index].accent);
+			const summary = document.querySelector<HTMLElement>('.message-mini-text');
+			if (summary) summary.textContent = `今週の合計: ${calendarEntries.reduce((total, entry) => total + entry.amount, 0).toFixed(1)}食`;
+		});
+	});
+	document.querySelector<HTMLButtonElement>('#calendar-prev')?.addEventListener('click', () => {
+		calendarWeekStart = new Date(calendarWeekStart);
+		calendarWeekStart.setDate(calendarWeekStart.getDate() - 7);
+		renderCalendar();
+	});
+	document.querySelector<HTMLButtonElement>('#calendar-next')?.addEventListener('click', () => {
+		calendarWeekStart = new Date(calendarWeekStart);
+		calendarWeekStart.setDate(calendarWeekStart.getDate() + 7);
+		renderCalendar();
+	});
 	document.querySelector<HTMLButtonElement>('[data-screen="home"]')?.addEventListener('click', render);
 	document.querySelector<HTMLButtonElement>('[data-screen="groups"]')?.addEventListener('click', renderGroups);
+	document.querySelector<HTMLButtonElement>('[data-screen="calendar"]')?.addEventListener('click', renderCalendar);
 	document.querySelectorAll<HTMLButtonElement>('[data-group-id]').forEach((card) => card.addEventListener('click', () => {
 		const group = groups.find((item) => item.id === card.dataset.groupId);
 		if (group) renderGroupDetail(group);
