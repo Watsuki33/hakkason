@@ -283,8 +283,25 @@ function getCalendarAccent(amount: number): CalendarEntry['accent'] {
 	return 'blue';
 }
 
+function getDoctorComment(entries: CalendarEntry[]): string {
+	const threeMealDays = entries.filter((entry) => entry.amount >= 3).length;
+	const weeklyTotal = entries.reduce((total, entry) => total + entry.amount, 0);
+
+	if (threeMealDays >= 5) {
+		return 'この調子！';
+	}
+	if (weeklyTotal <= 21) {
+		return 'もう少し食べよう';
+	}
+	if (weeklyTotal >= 22) {
+		return '食べすぎかも、、';
+	}
+	return 'この調子！';
+}
+
 function renderCalendar(): void {
 	calendarEntries = buildCalendarEntries(calendarWeekStart);
+	const doctorComment = getDoctorComment(calendarEntries);
 	root.innerHTML = `
 		<main class="calendar-shell">
 			<header class="calendar-header">
@@ -323,7 +340,7 @@ function renderCalendar(): void {
 					<div class="message-mini-avatar">◉</div>
 					<div class="message-mini-copy">
 						<p class="message-mini-label">いえん博士からのコメント</p>
-						<p class="message-mini-text">今週の合計: ${calendarEntries.reduce((total, entry) => total + entry.amount, 0).toFixed(1)}食</p>
+						<p class="message-mini-text">${doctorComment}</p>
 					</div>
 				</div>
 			</div>
