@@ -767,7 +767,8 @@ async function loadAdvice(): Promise<void> {
 		results.innerHTML = (advice.tips ?? []).map((tip, index) => `<section class="advice-card"><span>${['🥕', '💧', '🍽️'][index % 3]}</span><div><strong>おすすめ ${index + 1}</strong><p>${escapeHtml(tip)}</p></div></section>`).join('');
 	} catch (error) {
 		title.textContent = '分析できませんでした';
-		summary.textContent = error instanceof Error ? error.message : 'AI分析に失敗しました。';
+		const message = error instanceof Error && !error.message.includes('GEMINI_API_KEY が未設定です。') ? error.message : 'AI分析に失敗しました。';
+		summary.textContent = message;
 		results.innerHTML = '<section class="advice-card"><span>⚠️</span><div><strong>もう一度試してください</strong><p>Gemini側が一時的に混雑している可能性があります。少し待ってからアドバイス画面を開き直してください。</p></div></section>';
 	}
 }
