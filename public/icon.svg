@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="胃縁アイコン">
+  <rect width="512" height="512" rx="92" fill="#EDA7A6"/>
+  <g fill="#F8EAE7" stroke="#2D2A2A" stroke-width="12" stroke-linejoin="round">
+    <path d="M117 179c0-62 49-112 110-112h58c61 0 110 50 112 113l8 131c4 59-45 106-104 106H209c-59 0-106-47-106-106z"/>
+    <path d="M170 139c27-20 57-28 92-28m38 0c34 2 66 19 94 48" fill="none" stroke="#2D2A2A" stroke-width="10"/>
+  </g>
+  <g fill="#F7C9C7" stroke="#2D2A2A" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M200 213c-18-18-44-18-58 2-16 22-4 50 26 66 29 16 76 16 105 0 31-16 41-44 26-66-15-21-39-22-58-2"/>
+  </g>
+  <g fill="#2D2A2A">
+    <circle cx="202" cy="226" r="12"/>
+    <circle cx="310" cy="226" r="12"/>
+  </g>
+  <g fill="#F5B2B7" stroke="#2D2A2A" stroke-width="12">
+    <path d="M257 276c0 31-22 55-49 55-28 0-48-24-48-52 0-27 21-48 48-48 21 0 49 17 49 45Z"/>
+    <path d="M255 276c0 31 22 55 49 55 28 0 49-24 49-52 0-27-22-48-49-48-21 0-49 17-49 45Z"/>
+  </g>
+  <g fill="#F57C70" stroke="#2D2A2A" stroke-width="10" stroke-linejoin="round">
+    <path d="M256 305c-19-26-58-18-65 10-7 31 15 55 65 74 50-19 72-43 65-74-8-28-46-35-65-10Z"/>
+  </g>
+  <g fill="none" stroke="#2D2A2A" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M166 311c32-22 62-31 90-31m0 0c28 0 58 9 90 31"/>
+  </g>
+  <g fill="#F8EAE7" stroke="#2D2A2A" stroke-width="10">
+    <path d="M378 179c-26 5-41 22-50 42 6 23 29 40 52 40 22 0 42-17 48-37-16-22-33-39-50-45Z"/>
+  </g>
+</svg>

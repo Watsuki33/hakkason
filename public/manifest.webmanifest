@@ -1,0 +1,17 @@
+{
+  "name": "胃縁",
+  "short_name": "胃縁",
+  "start_url": "/hakkason/",
+  "display": "standalone",
+  "background_color": "#EDA7A6",
+  "theme_color": "#EDA7A6",
+  "description": "食事の記録とコミュニティを楽しむアプリ",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
