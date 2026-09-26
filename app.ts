@@ -781,7 +781,7 @@ function showProfile(returnAction: (() => void) | null = render): void {
 		<div class="home-scroll">
 		<section class="profile-content">
 			${profileAvatarMarkup('profile-large-avatar')}
-			<h2>${!profilePublic ? '<span class="private-lock" aria-label="非公開">🔒</span>' : ''}${escapeHtml(profileName)}</h2><p class="profile-handle">@my_gohan</p>${profileMessage ? `<p class="profile-message">${escapeHtml(profileMessage)}</p>` : ''}<p class="profile-visibility">${profilePublic ? '公開プロフィール' : '非公開プロフィール'}</p>
+			<h2>${!profilePublic ? '<span class="private-lock" aria-label="非公開">🔒</span>' : ''}${escapeHtml(profileName)}</h2><p class="profile-handle">${escapeHtml(ownUsername)}</p>${profileMessage ? `<p class="profile-message">${escapeHtml(profileMessage)}</p>` : ''}<p class="profile-visibility">${profilePublic ? '公開プロフィール' : '非公開プロフィール'}</p>
 			<div class="profile-stats profile-stats-two-row">
 				<button class="profile-stat-button" id="my-posts"><strong>12</strong><small>投稿</small></button>
 				<button class="profile-stat-button" id="my-connections"><strong>${new Set(connections.map((connection) => connection.id)).size}</strong><small>フレンド</small></button>
@@ -1002,7 +1002,7 @@ function showCamera(): void {
 		<header class="home-header"><button class="header-back" id="camera-back" aria-label="ホームに戻る">‹</button><h1>投稿</h1><button class="profile-button" id="camera-profile-button" aria-label="プロフィール">◉</button></header>
 		<div class="post-form">
 			<div class="photo-preview-area empty" id="photo-preview"><span>写真を選択してください</span></div>
-			<label class="photo-select-card" id="photo-select-card"><span class="photo-select-icon">＋</span><span class="photo-select-title">写真を選ぶ</span><small>タップしてカメラ撮影またはアルバムから選択</small><input id="photo-input" type="file" accept="image/*" capture="environment"></label>
+			<label class="photo-select-card" id="photo-select-card"><span class="photo-select-icon">＋</span><span class="photo-select-title">写真を選ぶ</span><small>タップしてアルバムまたはカメラから選択</small><input id="photo-input" type="file" accept="image/*"></label>
 			<div class="edit-tools" id="edit-tools" hidden><strong>写真を編集</strong><button type="button" data-filter="none">通常</button><button type="button" data-filter="bright">明るく</button><button type="button" data-filter="soft">やわらかく</button><button type="button" data-filter="gray">モノクロ</button><button type="button" id="rotate-photo">↻ 回転</button></div>
 			<label class="comment-label" for="post-comment">コメント</label><textarea id="post-comment" placeholder="コメントを入力..."></textarea>
 			<button class="publish-button" id="publish-button" disabled>投稿する</button>
