@@ -59,7 +59,10 @@ const friendDirectory: Connection[] = [
 	{ id: 'mei', name: 'めい', photo: '🍎', message: '食べ歩きが好き' },
 ];
 
-const ownUsername = '@my_gohan';
+type AppUser = { nickname: string; username: string; password: string };
+
+let ownUsername = '@my_gohan';
+let currentUser: AppUser | null = null;
 
 const root = document.querySelector<HTMLDivElement>('#app')!;
 let profileName = 'あなた';
@@ -71,6 +74,131 @@ let fontSize: FontSize = 'normal';
 let friendRequests: FriendRequest[] = [];
 let groupInvites: GroupInvite[] = [];
 let profileReturnAction: (() => void) | null = render;
+
+function normalizeUsername(value: string): string {
+	return value.trim().replace(/^@/, '').toLowerCase();
+}
+
+function loadUsers(): AppUser[] {
+	const seededUsers: AppUser[] = [{ nickname: 'あなた', username: 'my_gohan', password: '123456' }];
+	try {
+		const saved = localStorage.getItem('hakason-users');
+		if (!saved) {
+			localStorage.setItem('hakason-users', JSON.stringify(seededUsers));
+			return seededUsers;
+		}
+		const parsed = JSON.parse(saved) as AppUser[];
+		if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+		localStorage.setItem('hakason-users', JSON.stringify(seededUsers));
+		return seededUsers;
+	} catch {
+		return seededUsers;
+	}
+}
+
+function saveUsers(users: AppUser[]): void {
+	localStorage.setItem('hakason-users', JSON.stringify(users));
+}
+
+function applyLoggedInUser(user: AppUser): void {
+	currentUser = user;
+	profileName = user.nickname;
+	ownUsername = `@${user.username}`;
+	localStorage.setItem('hakason-current-user', user.username);
+}
+
+function renderAuthScreen(mode: 'login' | 'signup' = 'login'): void {
+	const isSignup = mode === 'signup';
+	root.innerHTML = `
+		<main class="auth-screen">
+			<section class="auth-card">
+				<div class="auth-mark">✿</div>
+				<h1>${isSignup ? '新規登録' : 'ログイン'}</h1>
+				<p class="auth-description">${isSignup ? 'ニックネームとユーザー名を設定して、あなたの食卓を始めよう。' : 'アカウントにログインして、今日のごはんを共有しよう。'}</p>
+				<div class="auth-tabs" aria-label="ログイン切り替え">
+					<button class="auth-tab ${!isSignup ? 'active' : ''}" type="button" data-auth-mode="login">ログイン</button>
+					<button class="auth-tab ${isSignup ? 'active' : ''}" type="button" data-auth-mode="signup">新規登録</button>
+				</div>
+				<form class="auth-form" id="auth-form">
+					${isSignup ? `<label for="auth-nickname">ニックネーム</label><input id="auth-nickname" name="nickname" type="text" placeholder="例：さくら" maxlength="20" autocomplete="nickname">` : ''}
+					<label for="auth-username">ユーザー名</label>
+					<div class="auth-username-field">
+						<span>@</span>
+						<input id="auth-username" name="username" type="text" placeholder="例：my_gohan" autocomplete="username" inputmode="text" required>
+					</div>
+					<p class="auth-field-note">フレンド申請の際に使うIDです。半角英数字と_のみ入力できます。</p>
+					<label for="auth-password">パスワード</label>
+					<div class="auth-password-field">
+						<input id="auth-password" name="password" type="password" placeholder="パスワード" autocomplete="current-password" required>
+					</div>
+					<p class="auth-error" id="auth-error" aria-live="polite"></p>
+					<button class="auth-submit" type="submit">${isSignup ? '新規登録する' : 'ログインする'}</button>
+				</form>
+				<button class="auth-guest" type="button" id="auth-demo-login">デモアカウントで始める</button>
+				<p class="auth-note">※ ログイン情報はこの端末に保存されます。</p>
+			</section>
+		</main>
+	`;
+	document.querySelectorAll<HTMLButtonElement>('.auth-tab').forEach((button) => {
+		button.addEventListener('click', () => renderAuthScreen(button.dataset.authMode === 'signup' ? 'signup' : 'login'));
+	});
+	document.querySelector<HTMLButtonElement>('#auth-demo-login')?.addEventListener('click', () => {
+		const demoUser = loadUsers()[0];
+		if (!demoUser) return;
+		applyLoggedInUser(demoUser);
+		localStorage.setItem('hakason-current-user', demoUser.username);
+		loadAppState();
+		profileName = demoUser.nickname;
+		ownUsername = `@${demoUser.username}`;
+		render();
+	});
+	document.querySelector<HTMLInputElement>('#auth-username')?.addEventListener('input', (event) => {
+		const input = event.currentTarget as HTMLInputElement;
+		input.value = input.value.replace(/[^A-Za-z0-9_]/g, '');
+	});
+	document.querySelector<HTMLFormElement>('#auth-form')?.addEventListener('submit', (event) => {
+		event.preventDefault();
+		const nicknameInput = document.querySelector<HTMLInputElement>('#auth-nickname');
+		const usernameInput = document.querySelector<HTMLInputElement>('#auth-username');
+		const passwordInput = document.querySelector<HTMLInputElement>('#auth-password');
+		const errorText = document.querySelector<HTMLElement>('#auth-error');
+		const nickname = nicknameInput?.value.trim() ?? '';
+		const username = normalizeUsername(usernameInput?.value ?? '');
+		const password = passwordInput?.value.trim() ?? '';
+		if (!username || !password) {
+			if (errorText) errorText.textContent = 'ユーザー名とパスワードを入力してください。';
+			return;
+		}
+		if (isSignup && !nickname) {
+			if (errorText) errorText.textContent = 'ニックネームを入力してください。';
+			return;
+		}
+		if (!/^[A-Za-z0-9_]+$/.test(username)) {
+			if (errorText) errorText.textContent = 'ユーザー名は半角英数字または_で入力してください。';
+			return;
+		}
+		const users = loadUsers();
+		if (isSignup) {
+			if (users.some((user) => normalizeUsername(user.username) === username)) {
+				if (errorText) errorText.textContent = 'このユーザー名はすでに使用されています。';
+				return;
+			}
+			const newUser: AppUser = { nickname, username, password };
+			users.push(newUser);
+			saveUsers(users);
+			applyLoggedInUser(newUser);
+			render();
+			return;
+		}
+		const user = users.find((candidate) => normalizeUsername(candidate.username) === username && candidate.password === password);
+		if (!user) {
+			if (errorText) errorText.textContent = 'ユーザー名またはパスワードが違います。';
+			return;
+		}
+		applyLoggedInUser(user);
+		render();
+	});
+}
 
 function saveAppState(): void {
 	const state: SavedState = { profileName, profileImage, notificationsEnabled, profileMessage, profilePublic, fontSize, connections, friendRequests, favorites, personalPosts };
@@ -949,6 +1077,10 @@ function showCamera(): void {
 	});
 }
 
+function initializeApp(): void {
+	applyFontSize();
+	renderAuthScreen();
+}
+
 loadAppState();
-applyFontSize();
-render();
+initializeApp();
